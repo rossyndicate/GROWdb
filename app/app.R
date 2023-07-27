@@ -13,9 +13,9 @@ library(shinyBS)
 huc2 <- readRDS('data/huc2.RDS') %>% st_transform(crs=4326)
 
 jgi_full_dataset <- readRDS('data/GROWdb.RDS') %>%
-  select(1:14)
-  
-jgi <-   readRDS('data/jgi_contus.RDS') 
+  select(1:13, 15)
+
+jgi <- readRDS('data/GROWdb.RDS') %>% filter(!is.na(COMID)) 
 
 jgi_spatial_1 <- jgi_full_dataset %>%
   st_as_sf(coords = c('Longitude', 'Latitude'),
@@ -27,19 +27,21 @@ jgi_spatial <- jgi %>%
            crs = 4326,
            remove = F)
 
-meta <- readRDS('data/geospatial_variable_descriptions.RDS')
+#meta <- readRDS('app/data/geospatial_variable_descriptions.RDS')
 
 # Change the color of dropdowns
 col.list <- c('#9E0243','#C02C4A','#DE5B5C','#F07555','#F98F52',
               '#FCB66C','#FED47F','#FFEC9F','#FFFFBF','#EFF8AA',
               '#DBEFA3','#B3E0A3','#8BCFA5','#62BBA8','#4596B7',
               '#4B73B3','#5E4FA1')
+
 colors <- paste0("color:",col.list,";")
 
+country_colors <- paste0("color:",c('#4B73B3', "#8BCFA5","#C02C4A", '#FED47F','#F07555',"#F98F52","#B3E0A3",'#DBEFA3'),";")
 
 ### USER INTERFACE ###
 
-ui <- navbarPage("GROW database",
+ui <- navbarPage("GROW Database Explorer",
                  theme = bslib::bs_theme(
                    bootswatch = "flatly",
                    #bg = "#FFFFFF",
@@ -68,12 +70,12 @@ ui <- navbarPage("GROW database",
                     .selectize-dropdown-menu a[data-value=\"16\"]{color:#4596B7}
                     .selectize-dropdown-menu a[data-value=\"17\"]{color:#4B73B3}
                     .selectize-dropdown-menu a[data-value=\"18\"]{color:#5E4FA1}"))),
-                  #tabPanel("GROW database",
-                  #         fluidPage("Blah blah blah")),
+                 #tabPanel("GROW database",
+                 #         fluidPage("Blah blah blah")),
                  tabPanel("Full Dataset",
                           fluidPage(
-                           
-                           sidebarLayout(
+                            
+                            sidebarLayout(
                               sidebarPanel(
                                 fluidRow(class = "filters",
                                          
@@ -87,20 +89,19 @@ ui <- navbarPage("GROW database",
                                              selected = "MetaG"))),
                                 
                                 
-                                
                                 # Country Selector.
-                                fluidRow(class="filters",
+                                fluidRow(class = "filters",
                                          column(
                                            12,
-                                           
                                            pickerInput(
                                              inputId = "Country_1",
-                                             label = "Country", 
-                                             choices = unique(jgi_full_dataset$Country) %>%
-                                               sort(),
+                                             label = "Countries", 
+                                             choices = c(unique(jgi_full_dataset$Country)),#c("USA","UK","Canada","Italy","Germany","Israel","South Korea","Republic of Congo"), #%>% sort(),
+                                             selected = c(unique(jgi_full_dataset$Country)),#c("USA","UK","Canada","Italy","Germany","Israel","South Korea","Republic of Congo"),
+                                             multiple = TRUE,
                                              options = list('actions-box' = TRUE),
-                                             selected = unique(jgi_full_dataset$Country),
-                                             multiple = TRUE))),
+                                             choicesOpt = list(style = country_colors) # <- NEW
+                                           ))), 
                                 
                                 downloadButton("downloadData_1", "Download Selected Data")),
                               
@@ -113,7 +114,7 @@ ui <- navbarPage("GROW database",
                                      # Table
                                      dataTableOutput("table_1")))),
                  
-                 tabPanel("Explore Geospatial (CONTUS only)",
+                 tabPanel("Explore Geospatial (CONUS only)",
                           fluidPage(
                             sidebarLayout(
                               sidebarPanel(
@@ -145,25 +146,25 @@ ui <- navbarPage("GROW database",
                                          column(
                                            6,
                                            pickerInput(
-                                           inputId = "huc2",
-                                           label  = "HUC-02",
-                                           choices = c('01','02','03','04','05','06','07','08',
-                                                       '10','11','12','13','14','15','16','17',
-                                                       '18'),
-                                           selected = c('01','02','03','04','05','06','07','08',
-                                                        '10','11','12','13','14','15','16','17',
-                                                        '18'),
-                                           options = list('actions-box' = TRUE),
-                                           multiple = TRUE,
-                                           choicesOpt = list(
-                                             style = colors))),
+                                             inputId = "huc2",
+                                             label  = "HUC-02",
+                                             choices = c('01','02','03','04','05','06','07','08',
+                                                         '10','11','12','13','14','15','16','17',
+                                                         '18'),
+                                             selected = c('01','02','03','04','05','06','07','08',
+                                                          '10','11','12','13','14','15','16','17',
+                                                          '18'),
+                                             options = list('actions-box' = TRUE),
+                                             multiple = TRUE,
+                                             choicesOpt = list(style = colors)
+                                           )),
                                          
                                          # Watershed Size Selector.
                                          column(
                                            6,
                                            sliderTextInput(
                                              inputId = "area",
-                                             label = "Watershed Size",
+                                             label = "Watershed Size (sqkm)",
                                              grid = TRUE,
                                              force_edges = TRUE,
                                              choices = c("0","10","100","1000","10000","100000","1000000",'3500000'),
@@ -252,7 +253,7 @@ ui <- navbarPage("GROW database",
                                                                                              "TmeanWs",
                                                                                              "PrecipWs",
                                                                                              "AridityIndexWs",
-                                                                                             "AridityIndexSample"
+                                                                                             "AridityIndexSite"
                                                                                              
                                                                                            ) %>% sort(),
                                                                                            
@@ -279,38 +280,38 @@ ui <- navbarPage("GROW database",
                                                                                              "TmeanWs",
                                                                                              "PrecipWs",
                                                                                              "AridityIndexWs",
-                                                                                             "AridityIndexSample"
+                                                                                             "AridityIndexSite"
                                                                                              
                                                                                            ) %>% sort(),
                                                                                            
                                                                                            selected = "WatershedAreaSqKm")),
-                                                             
-                                                             column(4,selectInput("z","Color",
-                                                                                  choices = c(
-                                                                                    
-                                                                                    "DischargeCFS",
-                                                                                    
-                                                                                    "StreamOrder",
-                                                                                    "WatershedAreaSqKm",
-                                                                                    
-                                                                                    "DamDensWs",
-                                                                                    "DamNrmStorWs",
-                                                                                    "MineDensWs",
-                                                                                    "WWTPAllDensWs",
-                                                                                    "WWTPMajorDensWs",
-                                                                                    
-                                                                                    "PctForest2016Ws",
-                                                                                    "PctImp2016Ws",
-                                                                                    "PctCrop2016Ws",
-                                                                                    
-                                                                                    "TmeanWs",
-                                                                                    "PrecipWs",
-                                                                                    "AridityIndexWs",
-                                                                                    "AridityIndexSample"
-                                                                                    
-                                                                                  ) %>% sort(),
-                                                                                  
-                                                                                  selected = "WatershedAreaSqKm"))),
+                                                                      
+                                                                      column(4,selectInput("z","Color",
+                                                                                           choices = c(
+                                                                                             
+                                                                                             "DischargeCFS",
+                                                                                             
+                                                                                             "StreamOrder",
+                                                                                             "WatershedAreaSqKm",
+                                                                                             
+                                                                                             "DamDensWs",
+                                                                                             "DamNrmStorWs",
+                                                                                             "MineDensWs",
+                                                                                             "WWTPAllDensWs",
+                                                                                             "WWTPMajorDensWs",
+                                                                                             
+                                                                                             "PctForest2016Ws",
+                                                                                             "PctImp2016Ws",
+                                                                                             "PctCrop2016Ws",
+                                                                                             
+                                                                                             "TmeanWs",
+                                                                                             "PrecipWs",
+                                                                                             "AridityIndexWs",
+                                                                                             "AridityIndexSite"
+                                                                                             
+                                                                                           ) %>% sort(),
+                                                                                           
+                                                                                           selected = "WatershedAreaSqKm"))),
                                                              
                                                              #fluidRow(girafeOutput("geo_plot", width = "100%", height = 600))),
                                                              fluidRow(plotlyOutput("geo_plot", width = "100%", height = 600))),
@@ -338,62 +339,62 @@ ui <- navbarPage("GROW database",
                                                                                              "TmeanWs",
                                                                                              "PrecipWs",
                                                                                              "AridityIndexWs",
-                                                                                             "AridityIndexSample"
+                                                                                             "AridityIndexSite"
                                                                                              
                                                                                            ) %>% sort(),
                                                                                            
-                                                                                           selected = "AridityIndexSample"
+                                                                                           selected = "AridityIndexSite"
                                                                                            
                                                                       )),
                                                                       
                                                                       column(4,selectInput("why","y-Axis",
                                                                                            choices = c(#"Autotroph",
-                                                                                                       #"Heterotroph",
-                                                                                                       #"SulfateReducer",
-                                                                                                       #"Homoacetogen",
-                                                                                                       #"Methanogen",
-                                                                                                       #"DenitrifierNonETC",
-                                                                                                       #"AerobicAmmoniaOxidizer",
-                                                                                                       #"Comammox",
-                                                                                                       #"Annamox",
-                                                                                                       #"NitrogenFixer",
-                                                                                                       "Phototroph",
-                                                                                                       #"Fermenter",
-                                                                                                       "Aerobe",
-                                                                                                       #"Microaerophillic",
-                                                                                                       #"OxidaseNonETC",
-                                                                                                       "Denitrifier"
-                                                                                                       
-                                                                                                       ) %>% sort(),
+                                                                                             #"Heterotroph",
+                                                                                             #"SulfateReducer",
+                                                                                             #"Homoacetogen",
+                                                                                             #"Methanogen",
+                                                                                             #"DenitrifierNonETC",
+                                                                                             #"AerobicAmmoniaOxidizer",
+                                                                                             #"Comammox",
+                                                                                             #"Annamox",
+                                                                                             #"NitrogenFixer",
+                                                                                             "Phototroph",
+                                                                                             #"Fermenter",
+                                                                                             "Aerobe",
+                                                                                             #"Microaerophillic",
+                                                                                             #"OxidaseNonETC",
+                                                                                             "Denitrifier"
+                                                                                             
+                                                                                           ) %>% sort(),
                                                                                            
-                                                                                           selected = "Fermenter")),
+                                                                                           selected = "Aerobe")),
                                                                       
-                                                             column(4,selectInput("zee","Color",
-                                                                                  choices = c(
-                                                                                    
-                                                                                    "DischargeCFS",
-                                                                                    
-                                                                                    "StreamOrder",
-                                                                                    "WatershedAreaSqKm",
-                                                                                    
-                                                                                    "DamDensWs",
-                                                                                    "DamNrmStorWs",
-                                                                                    "MineDensWs",
-                                                                                    "WWTPAllDensWs",
-                                                                                    "WWTPMajorDensWs",
-                                                                                    
-                                                                                    "PctForest2016Ws",
-                                                                                    "PctImp2016Ws",
-                                                                                    "PctCrop2016Ws",
-                                                                                    
-                                                                                    "TmeanWs",
-                                                                                    "PrecipWs",
-                                                                                    "AridityIndexWs",
-                                                                                    "AridityIndexSample"
-                                                                                    
-                                                                                  ) %>% sort(),
-                                                                                  
-                                                                                  selected = "WatershedAreaSqKm"))),
+                                                                      column(4,selectInput("zee","Color",
+                                                                                           choices = c(
+                                                                                             
+                                                                                             "DischargeCFS",
+                                                                                             
+                                                                                             "StreamOrder",
+                                                                                             "WatershedAreaSqKm",
+                                                                                             
+                                                                                             "DamDensWs",
+                                                                                             "DamNrmStorWs",
+                                                                                             "MineDensWs",
+                                                                                             "WWTPAllDensWs",
+                                                                                             "WWTPMajorDensWs",
+                                                                                             
+                                                                                             "PctForest2016Ws",
+                                                                                             "PctImp2016Ws",
+                                                                                             "PctCrop2016Ws",
+                                                                                             
+                                                                                             "TmeanWs",
+                                                                                             "PrecipWs",
+                                                                                             "AridityIndexWs",
+                                                                                             "AridityIndexSite"
+                                                                                             
+                                                                                           ) %>% sort(),
+                                                                                           
+                                                                                           selected = "WatershedAreaSqKm"))),
                                                              
                                                              
                                                              
@@ -412,9 +413,11 @@ server <- function(input, output, session) {
   filtered_data_1 <- reactive({
     
     # Filter data based on Country
-    if(!isTruthy(input$Country_1)){jgi_full_dataset<-filter(jgi_full_dataset,SampleName=="Bogus")
+    if(!isTruthy(input$Country_1)){jgi_full_dataset<-dplyr::filter(jgi_full_dataset,SampleName=="Bogus")
     }else{
-      jgi_full_dataset <- filter(jgi_full_dataset, Country %in% c(input$Country_1))}
+      jgi_full_dataset <- dplyr::filter(jgi_full_dataset, Country %in% c(input$Country_1))
+      #jgi_full_dataset <- dplyr::filter(jgi_full_dataset, grepl(paste((input$Country_1),collapse="|"), Country))
+    }
     
     # Filter data based on selected omics data.
     if(!isTruthy(input$Group_1)){jgi_full_dataset<-filter(jgi_full_dataset,SampleName=="Bogus")
@@ -445,39 +448,32 @@ server <- function(input, output, session) {
     
     validate (need(nrow(filtered_data_1()) > 0, message="No samples selected."))
     
-    if(input$Country_1=="Canada"){colorscheme = ("#9E0243")}
-    if(input$Country_1=="Germany"){colorscheme = ("#C02C4A")}
-    if(input$Country_1=="Israel"){colorscheme = ("#DE5B5C")}
-    if(input$Country_1=="Italy"){colorscheme = ("#F07555")}
-    if(input$Country_1=="Republic of Congo"){colorscheme = ("#F98F52")}
-    if(input$Country_1=="South Korea"){colorscheme =("#FCB66C")}
-    if(input$Country_1=="UK"){colorscheme =("#FED47F")}
-    if(input$Country_1=="USA"){colorscheme = ("#FFEC9F")}
-    if(input$Country_1=="All"){colorscheme =  colorFactor(palette=c("black","#E69F00","blue","#F0E442","#0072B2",
-                                                                    "#D55E00","#009E73","#CC79A7","#FCB66C"),filtered_data_1()$Country)(filtered_data_1()$Country)}
-    if(input$Country_1=="USA (Puerto Rico)"){colorscheme = ("#FFFFBF")}
-    
-    pal <- colorFactor(palette = "Spectral", jgi_full_dataset$Country) 
+    pal <- colorFactor(palette = "Spectral", jgi_full_dataset$Country)
     
     # Add selected data to map.
-    leafletProxy("map_1") %>% 
+    leafletProxy("map_1") %>%
       addCircleMarkers(
         data = filtered_data_1(),
         lng = ~Longitude,
         lat = ~Latitude,
-        popup = paste(filtered_data()$SampleName,
+        popup = paste(filtered_data_1()$SampleName,
                       "<br>",
-                      filtered_data()$Country),
-        radius = 3.5,
-        color = ~ pal(Country),
+                      filtered_data_1()$Country),
+        radius = 5,
+        fill = TRUE,
+        color = "black",
+        weight = 1,
+        opacity = 0.5,
+        fillColor = ~ pal(Country),
         fillOpacity = 1)
     
   })
   
+  
   output$table_1 <- DT::renderDataTable({
     validate (need(nrow(filtered_data_1()) > 0, message="No samples selected."))
     tableee <- filtered_data_1()
-    tableee$JGIlink <- paste0('<a  target=_blank href=', tableee$JGIlink, '>', tableee$JGIlink,'</a>' )
+    tableee$JGIData <- paste0('<a  target=_blank href=', tableee$JGIData, '>', tableee$JGIData,'</a>' )
     DT::datatable(tableee , escape = FALSE, options = list(autoWidth=TRUE, scrollX=TRUE, scrollY = "400px", scrollCollapse = TRUE))},
     options = list(autoWidth=TRUE, scrollX=TRUE, scrollY = "400px", scrollCollapse = TRUE))
   
@@ -523,7 +519,7 @@ server <- function(input, output, session) {
     # Filter data based on selected flow requirements.
     if(!isTruthy(input$flow)){jgi<-filter(jgi,SampleName=="Bogus")
     }else{
-      jgi <- filter(jgi,grepl(paste(simplify(input$flow), collapse="|"), gageinterval))
+      jgi <- filter(jgi,grepl(paste(simplify(input$flow), collapse="|"), FlowConditions))
     }
     
     # Filter data based on selected omics data.
@@ -543,7 +539,7 @@ server <- function(input, output, session) {
       huc2 <- filter(huc2, HUC2 %in% c(input$huc2))} 
     huc2
   })
-
+  
   output$map <- renderLeaflet({
     
     validate (need(isTruthy(filtered_data()), ""))
@@ -562,7 +558,7 @@ server <- function(input, output, session) {
     input$nav
     
     validate (need(nrow(filtered_data()) > 0, message="No samples selected."))
-  
+    
     pal <- colorFactor(palette = "Spectral", jgi$HUC2) 
     
     #Add selected data to map.
@@ -571,8 +567,8 @@ server <- function(input, output, session) {
       addPolygons(data = filtered_huc2(),
                   color = ~ pal(HUC2),
                   smoothFactor = 0.5,
-                  weight = 2.0,
-                  fillOpacity = 0,
+                  weight = 3.5,
+                  fillOpacity = 0.09,
                   fillColor = ~ pal(HUC2)) %>%
       addCircleMarkers(
         data = filtered_data(),
@@ -581,10 +577,14 @@ server <- function(input, output, session) {
         popup = paste(filtered_data()$SampleName,
                       "<br>",
                       "HUC2: ", filtered_data()$HUC2),
-        radius = 2,
-        color = ~pal(HUC2),
+        radius = 5,
+        fill = TRUE,
+        color = "black",
+        weight = 1,
+        opacity = 0.5,
+        fillColor = ~pal(HUC2),
         fillOpacity = 0.90)
-
+    
     output$geo_plot <- renderPlotly({
       
       plotly::plot_ly(data=filtered_data(), x=~get(input$x), y=~get(input$y), type='scatter', mode='markers',
@@ -609,9 +609,9 @@ server <- function(input, output, session) {
   # Create data table of selected features.
   output$table <- DT::renderDataTable({
     validate (need(nrow(filtered_data()) > 0, message="No samples selected."))
-    tablee <- select(filtered_data(), -gageinterval)
+    tablee <- select(filtered_data(), -FlowConditions)
     tablee$FlowData <- paste0('<a  target=_blank href=', tablee$FlowData, '>', tablee$FlowData,'</a>' )
-    tablee$JGIlink <- paste0('<a  target=_blank href=', tablee$JGIlink, '>', tablee$JGIlink,'</a>' )
+    tablee$JGIData <- paste0('<a  target=_blank href=', tablee$JGIData, '>', tablee$JGIData,'</a>' )
     DT::datatable(tablee , escape = FALSE, options = list(autoWidth=TRUE, scrollX=TRUE, scrollY = "200px", scrollCollapse = TRUE))},
     options = list(autoWidth=TRUE, scrollX=TRUE,scrollX=TRUE, scrollY = "200px", scrollCollapse = TRUE))
   

@@ -1,6 +1,6 @@
 ---
 title: "GROWdb_variable_puller"
-author: "Katie Willi, Matthew Ross"
+author: "ROSSyndicate"
 date: "2023-05-19"
 output: html_document
 ---
