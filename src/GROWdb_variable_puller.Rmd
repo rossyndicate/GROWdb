@@ -6,6 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
+library(data.table)
 library(sf)
 library(tidyverse)
 library(terra)
@@ -13,6 +14,7 @@ library(nhdplusTools)
 library(mapview)
 library(dataRetrieval)
 library(lubridate)
+library(nngeo)
 
 knitr::opts_chunk$set(echo = T, warning = F, comment = F, message = F)
 ```
@@ -28,7 +30,7 @@ sf_use_s2(FALSE)
 # url = paste0("https://edap-ow-data-commons.s3.amazonaws.com/NHDPlusV21/", "Data/NationalData/NHDPlusV21_NationalData_Seamless", "_Geodatabase_Lower48_07.7z"),
 # progress = TRUE)
 
-all_catch <- sf::st_read(dsn = "data/in/NHDPlusV21_NationalData_Seamless", "_Geodatabase_Lower48_07.gdb",
+all_catch <- st_read(dsn = "data/in/NHDPlusV21_NationalData_Seamless", "_Geodatabase_Lower48_07.gdb",
                          layer = "Catchment") %>%
   st_transform(crs = 4326) %>%
   rename(comid = FEATUREID) %>%
