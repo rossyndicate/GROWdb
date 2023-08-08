@@ -42,7 +42,7 @@ country_colors <- paste0("color:",c('#4B73B3', "#8BCFA5","#C02C4A", '#FED47F','#
 ### USER INTERFACE ###
 
 ui <- navbarPage("GROW Database Explorer",
-                 theme = bslib::bs_theme(
+                 theme = bs_theme(
                    bootswatch = "flatly",
                    #bg = "#FFFFFF",
                    #fg = "#000",
