@@ -2,7 +2,7 @@
 
 This repository houses the workflow for pulling geospatial data associated with GROWdb sample locations. It also houses the back-end code for the [GROWdb visualizing app](https://geocentroid.shinyapps.io/GROWdatabase/).
 
-## [Methods]{.underline}
+## Methods
 
 The watershed statistics for each sample were primarily obtained from the Environmental Protection Agency's StreamCat database (Hill et al., 2015) and the National Hydrography Plus Version 2 (NHDPlus V2) Dataset using the nhdplusTools package (Blodgett & Johnson, 2023) in R (R Core Team, 2023). StreamCat provides over 600 consistently computed watershed metrics for all waterbodies identified in the US Geological Survey (USGS)'s NHDPlusV2 geospatial framework, making it a suitable data source for the broad spectrum of sample locations in this study.
 
@@ -10,16 +10,16 @@ For watershed metrics that were not included in StreamCat (i.e., dominant Omerni
 
 Lastly, we collected streamflow data for sites that had a nearby stream gage. For locations without an identified co-located stream gage (WHONDRS typically co-located their sample sites with a stream gage), we identified USGS stream gages within 10 kilometers up- or downstream of our sampling locations using the dataRetrieval and nhdplusTools packages. All stream gages were then manually verified for their applicability to each sampling site (e.g., verifying there were no dams between the site and the stream gage, a major confluence, etc.). See Table 1 for a complete list of data sets included in this analysis.
 
-| Dataset                                          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-|--------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Dataset | Description  |
+| ------- | ------ |
 | StreamCat Geospatial Dataset (Hill et al., 2015) | Dams (Ostroff et al., 2013); fire perimeters and forest loss (USGS Sciencebase, 2015; Walters et al., 2015); soil characteristics (Carlisle et al., 2009); geochemical and geophysical characteristics (Hill et al., 2013; Olson & Hawkins, 2014); landcover (Dewitz , 2021); mines (USGS National Coal Resources Data System, 2015); climate (PRISM Climate Group, 2015; National Atmospheric Deposition Program, 2016); and anthropogenic/socioeconomic traits (US Census Bureau, 2014; Penino et al., 2020). |
-| NHDPlus V2 (McKay et al., 2012)                  | Stream characteristics and digital elevation model rasters.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Additional Geospatial Datasets                   | Omernik ecoregions (Omernik & Griffith, 2014); net primary production (Running & Shao, 2019); and aridity index (Zomer et al., 2007; Zomer et al., 2008).                                                                                                                                                                                                                                                                                                                                                       |
-| Streamflow Datasets                              | National Water Information System (USGS, 2021); Colorado Department of Water Resources (2020); Oregon Water Resources Department (2020); Oak Ridge National Laboratory (Brooks et al., 2019; Riscassi et al., 2019; Brooks et al., 2021); Long Term Ecological Research Network (USFS Northern Research Station, 2020); and the National Ecological Observatory Network (2022).                                                                                                                                 |
+| NHDPlus V2 (McKay et al., 2012) | Stream characteristics and digital elevation model rasters. |
+| Additional Geospatial Datasets | Omernik ecoregions (Omernik & Griffith, 2014); net primary production (Running & Shao, 2019); and aridity index (Zomer et al., 2007; Zomer et al., 2008). |
+| Streamflow Datasets | National Water Information System (USGS, 2021); Colorado Department of Water Resources (2020); Oregon Water Resources Department (2020); Oak Ridge National Laboratory (Brooks et al., 2019; Riscassi et al., 2019; Brooks et al., 2021); Long Term Ecological Research Network (USFS Northern Research Station, 2020); and the National Ecological Observatory Network (2022). |
 
-: Table 1: A complete list of data sets included in our analysis.
+Table 1: A complete list of data sets included in our analysis.
 
-## [Works Cited]{.underline}
+## Works Cited
 
 Blodgett D. and J. M. Johnson (2023). nhdplusTools: Tools for accessing and working with the NHDPlus. doi: 10.5066/P97AS8JD.
 
