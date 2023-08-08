@@ -75,6 +75,7 @@ grow <- grow %>% mutate(comid=ifelse(SampleName == "NASQAN2011_429" | SampleName
 Link WBD data to each GROW sample.
 
 ```{r}
+# swap to a function
 hucs <- list()
 
 for(i in 1:nrow(grow)){
