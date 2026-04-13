@@ -1,0 +1,57 @@
+---
+title: "GROWdb_2026_Update"
+author: "Katie Willi"
+date: "2026-04-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(mapview)
+library(nngeo)
+library(nhdplusTools)
+library(sf)
+
+list.files("src/", full.names = TRUE) %>%
+  walk(~source(.))
+```
+
+
+
+```{r}
+sites <- read_csv("data/lat_long_grow_KKA_03.25.26.csv") %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269) %>%
+  .[tigris::states() %>% filter(!STUSPS %in% c("HI", "PR", "AK")),]
+
+mapview(sites)
+```
+
+Delineate watersheds 
+
+```{r}
+sites %>%
+  split(seq_len(nrow(.))) %>%
+  walk(~try(getXYWatersheds(sf = .x, snap = TRUE)))
+
+watersheds <- list.files("data/grow_watersheds/", full.names = TRUE) %>%
+  map_dfr(~readRDS(.x))
+
+# retry missing
+sites %>%
+  filter(!sample_name %in% watersheds$sample_name) %>%
+  split(seq_len(nrow(.))) %>%
+  walk(~try(getXYWatersheds(sf = .x, snap = FALSE) %>%
+              mutate(type = "snap = FALSE")))
+
+flowlines <- get_nhdplus(comid = watersheds$comid)
+```
+
+Review watersheds
+
+```{r}
+review <- review_watersheds(watersheds, sites, flowlines)
+```
