@@ -21,90 +21,68 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
     aoi <- aoi_raw
   }
   
-  if (!snap) {
+  if (snap == FALSE) {
+    flowline <- get_nhdplus(AOI = aoi, realization = "flowline", t_srs = 4326)
+    # Use EPSG:5070 (CONUS Albers, metre-based) as the single working CRS.
+    # get_nhdplus and get_split_catchment both expect/return 4326, so we
+    # reproject their outputs immediately after each call.
+    working_crs <- 5070
+    aoi <- st_transform(aoi, working_crs)
     
-    flowline_danger_zone <- get_nhdplus(AOI = aoi, realization = "flowline") %>%
-      sf::st_buffer(30)
-    
-    near_flowline_100 <- any(lengths(sf::st_intersects(sf::st_buffer(aoi, 100), flowline_danger_zone)) > 0)
-    near_flowline_35  <- any(lengths(sf::st_intersects(sf::st_buffer(aoi, 35),  flowline_danger_zone)) > 0)
-    
-    if (!near_flowline_100) {
+      # get_nhdplus returns 4326 — reproject to working CRS right away
+      flowline_danger_zone <- get_nhdplus(AOI = st_transform(aoi, 4326),
+                                          realization = "flowline") %>%
+        st_transform(working_crs) %>%
+        st_buffer(30)   # 30 m buffer, valid because we're in a metre CRS
       
-      if (near_flowline_35) {
-        
-        site_buffer <- aoi %>%
-          sf::st_buffer(35)
-        
-        boundary_points <- site_buffer %>%
-          sf::st_boundary() %>%
-          sf::st_cast("POINT") %>%
-          dplyr::mutate(point_id = dplyr::row_number()) %>%
-          sf::st_difference(flowline_danger_zone) %>%
-          dplyr::filter(point_id %% 50 == 0) %>%
-          dplyr::bind_rows(aoi)
-        
-        splits <- purrr::map(
-          seq_len(nrow(boundary_points)),
-          \(i) {
-            get_split_catchment(point = sf::st_as_sfc(boundary_points[i, ])) %>%
-              dplyr::filter(is.na(catchmentID)) %>%
-              sf::st_make_valid() %>%
-              dplyr::mutate(area = as.numeric(sf::st_area(.)))
-          }
-        ) %>%
-          dplyr::bind_rows() %>%
-          dplyr::filter(area == max(area, na.rm = TRUE)) %>%
-          dplyr::select(-dplyr::any_of(c("catchmentID", "id")))
-        
-        if (sf::st_crs(splits) != sf::st_crs(aoi_raw)) {
-          splits <- sf::st_transform(splits, sf::st_crs(aoi_raw))
-        }
-        
-        return(splits)
-        
-      } else {
-        
-        mini_ws <- get_split_catchment(point = sf::st_as_sfc(aoi)) %>%
-          dplyr::filter(is.na(catchmentID)) %>%
-          sf::st_make_valid() %>%
-          dplyr::mutate(area = as.numeric(sf::st_area(.))) %>%
-          dplyr::select(-dplyr::any_of(c("catchmentID", "id")))
-        
-        if (sf::st_crs(mini_ws) != sf::st_crs(aoi_raw)) {
-          mini_ws <- sf::st_transform(mini_ws, sf::st_crs(aoi_raw))
-        }
-        
-        return(mini_ws)
+      # Always use the boundary-point ensemble approach — build a 35-m buffer,
+      # sample its boundary while avoiding the flowline corridor, then select
+      # the largest split catchment from all candidate points.
+      site_buffer <- aoi %>% st_buffer(35)
+      
+      boundary_points <- site_buffer %>%
+        st_boundary() %>%
+        st_cast("POINT") %>%
+        mutate(point_id = row_number()) %>%
+        st_difference(., flowline_danger_zone) %>%   # exclude flowline corridor
+        filter(point_id %% 50 == 0) %>%              # thin to every 50th point
+        bind_rows(aoi)                                # always include the original click
+      
+      # get_split_catchment expects 4326; reproject each point before calling,
+      # then immediately bring the result back to working_crs
+      splits <- vector("list", nrow(boundary_points))
+      for (i in seq_len(nrow(boundary_points))) {
+        pt_4326 <- st_transform(boundary_points[i, ], 4326) %>% st_as_sfc()
+        splits[[i]] <- tryCatch(
+          get_split_catchment(point = pt_4326) %>%
+            st_transform(working_crs) %>%
+            filter(is.na(catchmentID)) %>%
+            st_make_valid() %>%
+            mutate(area = as.numeric(st_area(.))),
+          error = function(e) NULL
+        )
       }
       
-    } else {
+      splits <- bind_rows(Filter(Negate(is.null), splits))
       
-      flowline <- get_nhdplus(AOI = aoi, realization = "flowline", t_srs = 4326)
+      if (nrow(splits) == 0) stop("No valid catchment splits found near this location.")
       
-      nearest_points <- sf::st_nearest_points(aoi, flowline)
-      snapped_points_sf <- sf::st_cast(nearest_points, "POINT")[2, ]
+      watershed_sf <- splits %>%
+        filter(area == max(area)) %>%
+        slice(1) %>%
+        dplyr::mutate(area = as.numeric(sf::st_area(.)),
+                      comid = flowline$comid,
+                      sample_name = aoi$sample_name) %>%
+        dplyr::select(comid, sample_name, area)  %>%
+        nngeo::st_remove_holes() %>%
+        st_make_valid() %>%
+        st_buffer(0)
       
-      trace <- get_raindrop_trace(snapped_points_sf, direction = "down")
+      # Project back
+      nhd_catch <- st_transform(watershed_sf, st_crs(aoi_raw))
       
-      raindrop <- sf::st_sfc(
-        sf::st_point(trace$intersection_point[[1]][1:2]),
-        crs = 4326
-      )
-      
-      nhd_catch <- get_split_catchment(raindrop, upstream = TRUE)[2, ] %>%
-        sf::st_make_valid() %>%
-        dplyr::mutate(area = as.numeric(sf::st_area(.))) %>%
-        dplyr::select(area) %>%
-        nngeo::st_remove_holes()
-      
-      if (sf::st_crs(nhd_catch) != sf::st_crs(aoi_raw)) {
-        nhd_catch <- sf::st_transform(nhd_catch, sf::st_crs(aoi_raw))
-      }
-      
-      saveRDS(nhd_catch, paste0("data/grow_watersheds/", sf$sample_name, ".RDS"))
     }
-  }
+
   
   if (snap) {
     flowline <- get_nhdplus(AOI = aoi, realization = "flowline", t_srs = 4326)
@@ -129,6 +107,8 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
       nhd_catch <- sf::st_transform(nhd_catch, sf::st_crs(aoi_raw))
     }
     
-    saveRDS(nhd_catch, paste0("data/grow_watersheds/", sf$sample_name, ".RDS"))
   }
+  
+  saveRDS(nhd_catch, paste0("data/grow_watersheds/", aoi$sample_name, ".RDS"))
 }
+
