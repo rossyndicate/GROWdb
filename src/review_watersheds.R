@@ -15,13 +15,14 @@ review_watersheds <- function(watersheds, sites, flowlines) {
   
   message(sprintf("Starting review. %d of %d watersheds remaining.\n", 
                   length(remaining), nrow(watersheds)))
-  message("Commands: y = Yes | n = No | s = Skip | q = Quit & save\n")
+  message("Commands: y = Yes | s = Small | b = Big | q = Quit & save\n")
   
   for (i in remaining) {
     watershed <- watersheds[i, ]
     site      <- sites %>% filter(sample_name == watershed$sample_name)
     flowline  <- flowlines %>% filter(comid == watershed$comid)
     bb <- st_bbox(flowline)
+    
     # Build map zoomed to flowline bbox
     m <- mapview(flowline, color = "steelblue", lwd = 3) +
       mapview(watershed, alpha.regions = 0.2, color = "orange") +
@@ -31,7 +32,6 @@ review_watersheds <- function(watersheds, sites, flowlines) {
       leaflet::fitBounds(lng1 = bb[["xmin"]], lat1 = bb[["ymin"]],
                          lng2 = bb[["xmax"]], lat2 = bb[["ymax"]])
     
-    
     print(m)
     
     # Prompt
@@ -40,16 +40,13 @@ review_watersheds <- function(watersheds, sites, flowlines) {
                     watershed$sample_name, watershed$comid))
     
     response <- ""
-    while (!response %in% c("y", "n", "s", "q")) {
-      response <- tolower(trimws(readline("  Accept? [y/n/s/q]: ")))
+    while (!response %in% c("y", "s", "b", "q")) {
+      response <- tolower(trimws(readline("  Accept? [y/s/b/q]: ")))
     }
     
     if (response == "q") {
       message("Quitting. Progress saved.")
       break
-    } else if (response == "s") {
-      message("  Skipped.\n")
-      next
     } else {
       watersheds$review[i] <- toupper(response)
       message(sprintf("  Saved: %s\n", toupper(response)))
