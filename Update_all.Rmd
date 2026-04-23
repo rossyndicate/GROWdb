@@ -1,0 +1,175 @@
+---
+title: "GROWdb_2026_Update"
+author: "Katie Willi"
+date: "2026-04-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(mapview)
+library(nngeo)
+library(nhdplusTools)
+library(sf)
+
+list.files("src/", full.names = TRUE) %>%
+  walk(~source(.))
+```
+
+Pull in all sites in GROW 2026:
+
+```{r}
+sites_2026 <- read_csv("data/lat_long_grow_KKA_03.25.26.csv") %>%
+  #filter(grepl("_sed_|_bw_", sample_name, ignore.case = TRUE)) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269, remove = FALSE) %>%
+  .[tigris::states() %>% filter(!STUSPS %in% c("HI", "PR", "AK")) %>% st_buffer(10000),]
+
+international_sites <- sites_2026 %>%
+  filter(sample_name %in% c("columbia_2019_sw_WHONDRS-S19S_0036", "columbia_2019_sw_WHONDRS-S19S_0074",
+                            "columbiariver1_2019_sw_WHONDRS-S19S_0075", "columbiariver2_2019_sw_WHONDRS-S19S_0076",
+                            "NASQAN2016_178", "NASQAN2016_179", "NASQAN2014_141", "NASQAN2014_144", "NASQAN2015_031", "NASQAN2016_164")) %>%
+  distinct(Latitude, Longitude)
+
+# small_sites <- sites_2026 %>%
+#   filter(sample_name %in% c("providencecreek_2019_sw_WHONDRS-S19S_0007", "redbuttecreek_2019_sw_WHONDRS-S19S_0029",
+#     "redbuttecreek_2019_sw_WHONDRS-S19S_0086", "watershed3_2019_sw_WHONDRS-S19S_0084",
+#     "sawmillbrook_2019_sw_WHONDRS-S19S_0072", "muddycreek_2019_sw_WHONDRS-S19S_0082")) %>%
+#   distinct(Latitude, Longitude)
+# 
+# wrong_comid <- sites_2026 %>%
+#   filter(sample_name %in% c("NASQAN2011_429", "NASQAN2011_433", "NASQAN2011_435", "teakettle2_2019_sw_WHONDRS-S19S_0032", "farmington_2019_sw_WHONDRS-S19S_0053", "NASQAN2011_188", "NASQAN2011_194","NASQAN2011_198", "southforkpolouse_2019_sw_WHONDRS-S19S_0055")) %>%
+#   distinct(Latitude, Longitude)
+```
+
+By site name, these are the ones missing:
+```{r}
+sites_2024 <- readRDS("data/archive/GROWdb_CONTUS.RDS") 
+
+missing <- sites_2026 %>%
+  anti_join(., sites_2024, by = c("sample_name" = "SampleName"))
+
+# These are the ones that were DROPPED from 2026:
+missing_2024 <- sites_2024 %>%
+  anti_join(., sites_2026, by = c("SampleName" = "sample_name")) %>%
+  pull(SampleName)
+```
+
+
+Grab pre-developed watersheds
+
+```{r}
+# remove sites at the same location for watershed delineation
+# to reduce processing time, and those found to be international
+new_dupes_removed <- sites_2026 %>%
+  select(Longitude, Latitude) %>%
+  distinct(Longitude, Latitude, .keep_all = TRUE) %>%
+  filter(!Longitude %in% international_sites$Longitude & !Latitude %in% international_sites$Latitude) %>%
+  rowid_to_column() %>% 
+  st_as_sf()
+```
+
+Delineate site watersheds: 
+
+```{r}
+new_dupes_removed %>%
+  split(seq_len(nrow(.))) %>%
+  walk(~try(getXYWatersheds(sf = .x, snap = TRUE, file_path = "data/grow_watersheds_all/")))
+```
+
+Pull in the delineated watersheds:
+
+```{r}
+watersheds <- list.files("data/grow_watersheds_all/", full.names = TRUE) %>%
+  map_dfr(~readRDS(.x)) 
+```
+
+Retry sites whose watersheds didn't delineate (errored out):
+
+```{r}
+new_dupes_removed %>%
+  filter(!rowid %in% watersheds$rowid)  %>%
+  split(seq_len(nrow(.))) %>%
+  walk(~try(getXYWatersheds(sf = .x, snap = TRUE, file_path = "data/grow_watersheds_all/")))
+
+watersheds <- list.files("data/grow_watersheds_all/", full.names = TRUE) %>%
+  map_dfr(~readRDS(.x)) 
+
+broken_sites <- new_dupes_removed %>%
+ filter(!rowid %in% watersheds$rowid) 
+```
+
+
+Review the delineated watersheds, flag watersheds that weren't delineated correctly:
+
+```{r}
+flowlines <- get_nhdplus(comid = watersheds %>% filter(!is.na(comid)) %>% pull(comid))
+
+review <- review_watersheds(watersheds = watersheds, flowlines = flowlines, sites = new_dupes_removed)
+
+saveRDS(review, "data/review_all.RDS")
+```
+
+Subset watersheds as either good, bad "small" (site too small for NHD), bad "other" (some other reason the watershed isn't delineated correctly)
+
+```{r}
+review <- readRDS("data/review_all.RDS")
+
+good <- review %>%
+  filter(review == "Y")
+
+small <- review %>% 
+  filter(review == "S")
+
+weird <- review %>%
+  filter(review == "B")
+```
+
+Retry for bad small ones with snap = FALSE
+
+```{r}
+new_dupes_removed %>%
+  filter(rowid %in% small$rowid) %>%
+  split(seq_len(nrow(.))) %>%
+  walk(~try(getXYWatersheds(sf = .x, snap = FALSE)))
+
+small_review <- list.files("data/grow_watersheds_all/", full.names = TRUE) %>%
+  map_dfr(~readRDS(.x)) %>%
+  filter(rowid %in% small$rowid) %>%
+  review_watersheds(watersheds = ., sites = new_dupes_removed, flowlines = flowlines)
+```
+
+
+# Put all watersheds together:
+
+```{r}
+previous_combined <- new_with_normal_delineations %>%
+  bind_rows(new_with_small_delineations %>% st_as_sf() %>% st_transform(4326)) %>%
+  st_as_sf() %>%
+  left_join(., archive_ws %>% st_drop_geometry() %>% select(sample_name, old_comid = comid), by = c("sample_name")) %>%
+  left_join(., archive_ws %>% st_drop_geometry() %>% select(Latitude, Longitude, old_comid = comid), by = c("Latitude", "Longitude")) %>%
+  mutate(comid = if_else(is.na(old_comid.x), old_comid.y, old_comid.x)) %>%
+  select(-c(old_comid.x, old_comid.y)) %>%
+  distinct()
+
+new_combined <- list.files("data/grow_watersheds/", full.names = TRUE) %>%
+  map_dfr(~readRDS(.x)) %>%
+  inner_join(sites_2026 %>% st_drop_geometry(), by = c("Longitude", "Latitude"))
+
+all_watersheds <- previous_combined %>%
+  bind_rows(new_combined %>% st_transform(4326)) 
+
+saveRDS(all_watersheds, "data/all_watersheds.RDS")
+
+# are any sites missing that we needed to delineate?
+
+test <- sites_2026 %>%
+  anti_join(all_watersheds %>% st_drop_geometry(), by = "sample_name") 
+
+
+nrow(test) != 0
+```
+
