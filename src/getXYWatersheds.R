@@ -21,10 +21,12 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
     aoi <- aoi_raw
   }
   
-  small_watersheds <- tibble(Latitude = c(44.49060, 38.92329, 44.21339, 38.98269, 32.42735, 33.33772, 40.78319, 40.77970, 33.33747, 43.95472, 38.89520, 41.86957,
-                                          43.95472, 38.87497, 37.05229, 40.78464, 40.78010, 42.52339, 38.89440, 37.05229, 41.86957, 38.92329, 44.21339),
+  out_rowid <- aoi$rowid[1]
+  
+  small_watersheds <- tibble(Latitude = c(44.49060, 38.92329, 44.21339, 38.98269, 32.42735, 33.33772, 40.78319, 40.77970, 33.33747, 43.95472, 38.89520, 41.86957, 
+                                          43.95472, 38.87497, 37.05229, 40.78464, 40.78010, 42.52339, 38.89440, 37.05229, 41.86957, 38.92329, 44.21339, 32.42735, 38.87486),
                              Longitude = c(-72.16220, -106.94239, -122.24398, -107.00515, -110.75784, -81.71816, -111.80126, -111.80640, -81.71821, -71.72278, -78.14760, -73.00222,
-                                           -71.72278,  -76.54649, -119.19536, -111.79547, -111.80540,  -71.18545, -78.14740, -119.19536, -73.00222, -106.94239, -122.24398))
+                                           -71.72278,  -76.54649, -119.19536, -111.79547, -111.80540,  -71.18545, -78.14740, -119.19536, -73.00222, -106.94239, -122.24398, -110.75784, -76.54654))
   
   if (paste(round(aoi$Latitude, 4), round(aoi$Longitude, 4)) %in% paste(round(small_watersheds$Latitude, 4), round(small_watersheds$Longitude, 4))){
     
@@ -32,11 +34,49 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
     
   }
   
-  wrong_comids <- tibble(Latitude = c(41.86958, 30.75852, 41.01528, 46.73222, 36.95497, 43.68620, 31.85310, 37.21647),
-                         Longitude = c(-72.79677, -91.39595, -96.15778, -117.18038, -119.02375, -121.68733, -88.15748, -89.46758),
-                         comid = c(6109731, 19085457, 17416032, 23459939, 22050327, 23702001, 18548456, 5092616))
+  uniquely_weird <- tibble(Latitude = c(43.10950),
+                           Longitude = c(-89.64070),
+                           site_comid = c(13633173),
+                           extra_comid = c(13633277))
   
-  if (paste(round(aoi$Latitude, 4), round(aoi$Longitude, 4)) %in% paste(round(wrong_comids$Latitude, 4), round(wrong_comids$Longitude, 4))){
+  wrong_comids <- tibble(Latitude = c(30.75852, 41.01528, 46.73222, 36.95497, 43.68620, 31.85310, 37.21647),
+                         Longitude = c(-91.39595, -96.15778, -117.18038, -119.02375, -121.68733, -88.15748, -89.46758),
+                         comid = c(19085457, 17416032, 23459939, 22050327, 23702001, 18548456, 5092616))
+  
+  if(paste(round(aoi$Latitude, 4), round(aoi$Longitude, 4)) %in% paste(round(uniquely_weird$Latitude, 4), round(uniquely_weird$Longitude, 4))){
+    
+    flowline <- get_nhdplus(AOI = aoi, realization = "flowline", t_srs = 4326)
+    
+    nearest_points <- sf::st_nearest_points(aoi, flowline)
+    snapped_points_sf <- sf::st_cast(nearest_points, "POINT")[2, ]
+    
+    trace <- get_raindrop_trace(snapped_points_sf, direction = "down")
+    
+    raindrop <- sf::st_sfc(sf::st_point(trace$intersection_point[[1]][1:2]),
+                           crs = 4326)
+    
+    
+    nhd_bb_catch <- get_split_catchment(raindrop, upstream = TRUE)[2, ] %>%
+      sf::st_make_valid() %>%
+      nngeo::st_remove_holes()
+    
+    aoi_mod <- uniquely_weird %>%
+      filter(paste(round(Latitude, 4), round(Longitude, 4)) %in% paste(round(aoi$Latitude, 4), round(aoi$Longitude, 4)))
+    
+    nhd_catch <- get_nldi_basin(nldi_feature = list(featureSource = "comid", featureID = aoi_mod$extra_comid)) %>% 
+      st_make_valid() %>%
+      bind_rows(nhd_bb_catch) %>%
+      summarize() %>%
+      st_make_valid() %>%
+      mutate(comid = aoi_mod$extra_comid,
+             rowid = aoi$rowid,
+             Latitude = aoi$Latitude,
+             Longitude = aoi$Longitude,
+             watershed = "NLDI") %>%
+      dplyr::select(comid, rowid, Latitude, Longitude, watershed) %>%
+      nngeo::st_remove_holes()
+    
+  } else if (paste(round(aoi$Latitude, 4), round(aoi$Longitude, 4)) %in% paste(round(wrong_comids$Latitude, 4), round(wrong_comids$Longitude, 4))){
     
     aoi_mod <- wrong_comids %>%
       filter(paste(round(Latitude, 4), round(Longitude, 4)) %in% paste(round(aoi$Latitude, 4), round(aoi$Longitude, 4)))
@@ -48,7 +88,7 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
              rowid = aoi$rowid,
              Latitude = aoi$Latitude,
              Longitude = aoi$Longitude,
-             watershed = "nldi") %>%
+             watershed = "NLDI") %>%
       dplyr::select(comid, rowid, Latitude, Longitude, watershed) %>%
       nngeo::st_remove_holes()
     
@@ -67,7 +107,7 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
                     rowid = aoi$rowid,
                     Latitude = aoi$Latitude,
                     Longitude = aoi$Longitude,
-                    watershed = "nldi") %>%
+                    watershed = "NLDI") %>%
       dplyr::select(comid, rowid, Latitude, Longitude, watershed)
     
     
@@ -99,7 +139,7 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
       
       # Always use the boundary-point ensemble approach — build a 35-m buffer,
       # sample its boundary while avoiding the flowline corridor, then select
-      # the largest split catchment from all candidate points.
+      # the largest NHD Raindrop Trace from all candidate points.
       site_buffer <- aoi %>% st_buffer(35)
       
     }
@@ -147,11 +187,11 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
     nhd_catch <- splits %>%
       filter(area == max(area)) %>%
       slice(1) %>%
-      dplyr::mutate(comid = NA,
+      dplyr::mutate(comid = flowline$comid,
                     rowid = aoi$rowid,
                     Latitude = aoi$Latitude,
                     Longitude = aoi$Longitude,
-                    watershed = "micro-nhd") %>%
+                    watershed = "Off-Network") %>%
       dplyr::select(comid, rowid, Latitude, Longitude, watershed) %>%
       nngeo::st_remove_holes() %>%
       st_make_valid() %>%
@@ -202,16 +242,13 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
     
     
     
-    error_watersheds <- tibble(Latitude = c(30.69074, 30.44567, 29.69282, 38.70981, 32.44417, 32.71866, 29.85715, 38.89440),
-                               Longitude = c(-91.73623,  -91.19156, -91.21194,  -91.43850,  -90.91417, -114.71884,  -89.97785,  -78.14740))
+    error_watersheds <- tibble(Latitude = c(30.69074, 30.44567, 29.69282, 38.70981, 32.44417, 32.71866, 29.85715, 38.89440, 41.86958),
+                               Longitude = c(-91.73623,  -91.19156, -91.21194,  -91.43850,  -90.91417, -114.71884,  -89.97785,  -78.14740, -72.79677))
     
     
     if (paste(round(aoi$Latitude, 4), round(aoi$Longitude, 4)) %in% paste(round(error_watersheds$Latitude, 4), round(error_watersheds$Longitude, 4))){
       
-      
       remove <- get_nhdplus(AOI = aoi, realization = "catchment")
-      
-      
       
       swap <- get_split_catchment(raindrop, upstream = FALSE)[2, ] %>%
         sf::st_make_valid() %>%
@@ -234,7 +271,7 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
                rowid = aoi$rowid,
                Latitude = aoi$Latitude,
                Longitude = aoi$Longitude,
-               watershed = "nldi + swapped lower catchment") %>%
+               watershed = "NLDI") %>%
         dplyr::select(comid, rowid, Latitude, Longitude, watershed) 
       
       
@@ -247,7 +284,7 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
                       rowid = aoi$rowid,
                       Latitude = aoi$Latitude,
                       Longitude = aoi$Longitude,
-                      watershed = "split catchment") %>%
+                      watershed = "NHD Raindrop Trace") %>%
         dplyr::select(comid, rowid, Latitude, Longitude, watershed) %>%
         nngeo::st_remove_holes()
     }
@@ -258,7 +295,16 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
     nhd_catch <- sf::st_transform(nhd_catch, sf::st_crs(aoi_raw))
   }
   
-  saveRDS(nhd_catch, paste0(file_path, "/", aoi$rowid, ".RDS"))
+  
+  if((round(aoi$Latitude, 4) == round(42.52356, 4) & round(aoi$Longitude, 4) == round(-71.18482, 4)) |
+     round(aoi$Latitude, 4) == round(42.52339, 4) & round(aoi$Longitude, 4) == round(-71.18545, 4)){
+    
+    nhd_catch <- nhd_catch %>%
+      mutate(watershed = "Off-Network")
+    
+  }    
+  
+  saveRDS(nhd_catch, paste0(file_path, "/", out_rowid, ".RDS"))
   
 }
 
