@@ -1,4 +1,4 @@
-getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FALSE, file_path = "data/grow_watersheds/") {
+getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FALSE, file_path = "data/grow_watersheds_all/") {
   
   if (is.null(sf) && is.null(coordinates)) {
     stop("Provide either `sf` or `coordinates`.")
@@ -24,11 +24,14 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
   out_rowid <- aoi$rowid[1]
   
   small_watersheds <- tibble(Latitude = c(44.49060, 38.92329, 44.21339, 38.98269, 32.42735, 33.33772, 40.78319, 40.77970, 33.33747, 43.95472, 38.89520, 41.86957, 
-                                          43.95472, 38.87497, 37.05229, 40.78464, 40.78010, 42.52339, 38.89440, 37.05229, 41.86957, 38.92329, 44.21339, 32.42735, 38.87486),
+                                          43.95472, 38.87497, 37.05229, 40.78464, 40.78010, 42.52339, 38.89440, 37.05229, 41.86957, 38.92329, 44.21339, 32.42735, 38.87486,
+                                          44.20732, 44.20852, 44.21339),
                              Longitude = c(-72.16220, -106.94239, -122.24398, -107.00515, -110.75784, -81.71816, -111.80126, -111.80640, -81.71821, -71.72278, -78.14760, -73.00222,
-                                           -71.72278,  -76.54649, -119.19536, -111.79547, -111.80540,  -71.18545, -78.14740, -119.19536, -73.00222, -106.94239, -122.24398, -110.75784, -76.54654))
+                                           -71.72278,  -76.54649, -119.19536, -111.79547, -111.80540,  -71.18545, -78.14740, -119.19536, -73.00222, -106.94239, -122.24398, -110.75784, -76.54654,
+                                           -122.2581, -122.2568, -122.2440))
   
-  if (paste(round(aoi$Latitude, 4), round(aoi$Longitude, 4)) %in% paste(round(small_watersheds$Latitude, 4), round(small_watersheds$Longitude, 4))){
+  if (paste(round(aoi$Latitude, 4), round(aoi$Longitude, 4)) %in% 
+      paste(round(small_watersheds$Latitude, 4), round(small_watersheds$Longitude, 4))){
     
     snap <- FALSE
     
@@ -130,10 +133,14 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
     if((round(aoi$Latitude, 4) == round(40.78319, 4) & round(aoi$Longitude, 4) == round(-111.80126, 4)) |
        (round(aoi$Latitude, 4) == round(37.05229, 4) & round(aoi$Longitude, 4) == round(-119.19536, 4)) |
        (round(aoi$Latitude, 4) == round(41.86957, 4) & round(aoi$Longitude, 4) == round(-73.00222, 4)) |
-       (round(aoi$Latitude, 4) == round(38.92329, 4) & round(aoi$Longitude, 4) == round(-106.94239, 4)) |
-       (round(aoi$Latitude, 4) == round(44.21339, 4) & round(aoi$Longitude, 4) == round(-122.24398, 4))){
+       (round(aoi$Latitude, 4) == round(38.92329, 4) & round(aoi$Longitude, 4) == round(-106.94239, 4))){ #|
+       #(round(aoi$Latitude, 4) == round(44.21339, 4) & round(aoi$Longitude, 4) == round(-122.24398, 4))){
       
       site_buffer <- aoi %>% st_buffer(80)
+      
+    } else if (round(aoi$Latitude, 4) == round(44.21339, 4) & round(aoi$Longitude, 4) == round(-122.24398, 4)){
+      
+      site_buffer <-  aoi %>% st_buffer(250)
       
     } else {
       
@@ -151,7 +158,10 @@ getXYWatersheds <- function(sf = NULL, coordinates = NULL, crs = NULL, snap = FA
        (round(aoi$Latitude, 4) == round(37.05229, 4) & round(aoi$Longitude, 4) == round(-119.19536, 4)) |
        (round(aoi$Latitude, 4) == round(41.86957, 4) & round(aoi$Longitude, 4) == round(-73.00222, 4)) |
        (round(aoi$Latitude, 4) == round(38.92329, 4) & round(aoi$Longitude, 4) == round(-106.94239, 4)) |
-       (round(aoi$Latitude, 4) == round(44.21339, 4) & round(aoi$Longitude, 4) == round(-122.24398, 4))){
+       (round(aoi$Latitude, 4) == round(44.21339, 4) & round(aoi$Longitude, 4) == round(-122.24398, 4)) |
+       (round(aoi$Latitude, 4) == round(44.20970, 4) & round(aoi$Longitude, 4) == round(-122.2570, 4))
+       
+       ){
       split_count <- 10
     } else {
       split_count <- 50

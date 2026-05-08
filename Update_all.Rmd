@@ -25,12 +25,40 @@ list.files("src/", full.names = TRUE) %>%
 Pull in all sites in updated GROW:
 
 ```{r}
-conus_sites_update <- read_csv("data/lat_long_grow_KKA_03.25.26.csv") %>%
+conus_sites_pre <- read_csv("data/lat_long_grow_KKA_03.25.26.csv") %>%
   mutate(Longitude = ifelse(sample_name == "marshallgulch_2019_sw_WHONDRS-S19S_0035", -110.75784, Longitude),
          Latitude = ifelse(sample_name == "marshallgulch_2019_sw_WHONDRS-S19S_0035", 32.42735, Latitude)) %>%
   #filter(grepl("_sed_|_bw_", sample_name, ignore.case = TRUE)) %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269, remove = FALSE) %>%
   .[tigris::states() %>% filter(!STUSPS %in% c("HI", "PR", "AK")) %>% st_buffer(10000),]
+
+conus_sites_update <- read_csv("data/date_lat_long_grow_KKA_05.05.26.csv") %>%
+  mutate(Longitude = ifelse(sample_name == "marshallgulch_2019_sw_WHONDRS-S19S_0035", -110.75784, Longitude),
+         Latitude = ifelse(sample_name == "marshallgulch_2019_sw_WHONDRS-S19S_0035", 32.42735, Latitude)) %>%
+  #filter(grepl("_sed_|_bw_", sample_name, ignore.case = TRUE)) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269, remove = FALSE) %>%
+  .[tigris::states() %>% filter(!STUSPS %in% c("HI", "PR", "AK")) %>% st_buffer(10000),]
+
+# Find rows where coordinates changed between versions
+coords_changed <- conus_sites_update %>%
+  st_drop_geometry() %>%
+  select(sample_name, Latitude_update = Latitude, Longitude_update = Longitude) %>%
+  left_join(
+    conus_sites_pre %>%
+      st_drop_geometry() %>%
+      select(sample_name, Latitude_pre = Latitude, Longitude_pre = Longitude),
+    by = "sample_name") %>%
+  filter(
+    !is.na(Latitude_pre) &
+    (
+      Latitude_update != Latitude_pre |
+      Longitude_update != Longitude_pre
+    )
+  )
+
+# looks good!
+coords_changed
+
 ```
 
 Which sites are new, are any sites dropped?
@@ -98,7 +126,8 @@ Pull in the delineated watersheds:
 
 ```{r}
 watersheds <- list.files("data/grow_watersheds_all/", full.names = TRUE) %>%
-  map_dfr(~readRDS(.x)) 
+  map_dfr(~readRDS(.x)) #%>%
+  #filter(Latitude %in% coords_changed$Latitude_update & Longitude %in% coords_changed$Longitude_update)
 ```
 
 Retry sites whose watersheds didn't delineate (if any errored out):
@@ -159,9 +188,9 @@ weird <- review %>%
 
 Review the "bizarre" ones, one at a time:
 ```{r}
-mapview(new_dupes_removed[44,]) # 
-mapview(new_dupes_removed[51,]) # 
-mapview(new_dupes_removed[62,]) # 
+# mapview(new_dupes_removed[44,]) # 
+# mapview(new_dupes_removed[51,]) # 
+# mapview(new_dupes_removed[62,]) # 
 ```
 
 ## Bind all watersheds together
@@ -174,14 +203,14 @@ conus_watersheds <- conus_sites_update %>%
 
 saveRDS(conus_watersheds, "data/conus_watersheds.RDS")
 
-outside_conus <- read_csv("data/lat_long_grow_KKA_03.25.26.csv") %>%
+outside_conus <- read_csv("data/date_lat_long_grow_KKA_05.05.26.csv") %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269, remove = FALSE) %>%
   filter(!sample_name %in% conus_watersheds$sample_name)
 
 mapview(outside_conus) #... looks correct!
 ```
 
-##Add back in the sites that were dropped ?
+## Add back in the sites that were dropped ?
 
 ```{r}
 international_sites <- conus_sites_update %>%
@@ -209,11 +238,11 @@ missing_dupes_removed %>%
 watersheds_missing <- list.files("data/grow_watersheds_missing/", full.names = TRUE) %>%
   map_dfr(~readRDS(.x)) 
 
-#flowlines <- get_nhdplus(comid = watersheds_missing %>% filter(!is.na(comid)) %>% pull(comid))
+flowlines <- get_nhdplus(comid = watersheds_missing %>% filter(!is.na(comid)) %>% pull(comid))
 
-#review <- review_watersheds(watersheds = watersheds_missing, flowlines = flowlines, sites = missing_dupes_removed)
+review <- review_watersheds(watersheds = watersheds_missing, flowlines = flowlines, sites = missing_dupes_removed)
 
-#saveRDS(review, "data/review_missing.RDS")
+saveRDS(review, "data/review_missing.RDS")
 ```
 
 ```{r}
@@ -223,19 +252,19 @@ conus_watersheds <- list.files("data/grow_watersheds_all/", full.names = TRUE) %
   mutate(update = if_else(sample_name %in% new_update$sample_name, "new", "previous")) %>%
   st_make_valid()
 
-
 conus_missing_watersheds <- list.files("data/grow_watersheds_missing/", full.names = TRUE) %>%
   map_dfr(~readRDS(.x)) %>%
   inner_join(., missing_previous %>% st_drop_geometry(), by = c("Latitude", "Longitude")) %>%
   mutate(update = "missing") %>%
-  select(sample_name = SampleName, comid = comid.y, rowid, Latitude, Longitude, watershed, update) %>%
+  select(sample_name = SampleName, Collection_Date = Date, comid = comid.y, rowid, Latitude, Longitude, watershed, update) %>%
   st_make_valid()
 
 conus_complete <- conus_watersheds %>%
   bind_rows(conus_missing_watersheds)  %>%
+  select(-rowid) %>%
+  distinct() %>%
   st_make_valid()
 
 saveRDS(conus_complete, "data/conus_watersheds.RDS")
-
 ```
 

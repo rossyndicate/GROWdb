@@ -6,10 +6,8 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
+knitr::opts_chunk$set(echo = T, warning = F, comment = F, message = F)
 
-```{r setup, include=FALSE}
 library(data.table)
 library(sf)
 library(tidyverse)
@@ -21,7 +19,9 @@ library(lubridate)
 library(StreamCatTools)
 library(nngeo)
 library(units) 
-knitr::opts_chunk$set(echo = T, warning = F, comment = F, message = F)
+
+list.files("src/", full.names = TRUE) %>%
+  walk(~source(.))
 ```
 
 Read in datasets, filter GROWdb samples to only those found in CONTUS.
@@ -109,6 +109,8 @@ for(i in 1:length(comids)){
 }
 
 grow_lines <- bind_rows(grow_lines) 
+
+write_csv(grow_lines, "data/grow_lines.csv")
 
 # join GROW with NHD data
 grow_nhd <- grow_watersheds %>%
@@ -398,7 +400,7 @@ grow_ws_stats <- cbind(grow_watersheds, ws_aridity, ws_npp, ws_omernik_i, ws_ome
 
 rm(omernik_i, omernik_i_ea, omernik_ii, omernik_ii_ea, omernik_iii, omernik_iii_ea, aridity, tmean, tmax, tmin, ppt, npp,
    ws_omernik_i, ws_omernik_ii, ws_omernik_iii, ws_aridity, ws_npp, point_aridity, point_omernik, point_tmean, point_tmax, point_tmin, 
-   point_ppt, point_npp, streamcat_df, grow_lines, grow_watersheds_id, streamcat_vars, comid, ea_crs, i, comids)
+   point_ppt, point_npp, streamcat_df, grow_lines, grow_watersheds_id, streamcat_vars, comid, ea_crs, i, comids, grow_ws_ea)
 
 gc()
 ```
@@ -408,39 +410,51 @@ gc()
 Finding GROWdb samples that have a provided stream gauge; WHONDRS typically couples samples to flow data.
 
 ```{r}
-grow_watersheds <- readRDS("data/conus_watersheds.RDS") %>%
-  mutate(whondrs_sample_id = str_extract(sample_name, "WHONDRS.*$"))
+all_grow_watersheds <- readRDS("data/conus_watersheds.RDS") %>%
+  mutate(whondrs_sample_id = str_extract(sample_name, "WHONDRS.*$"),
+         Collection_Date = mdy(Collection_Date)) 
 
 # Are all WHONDRS sites represented in the WHONDRS metadata?
-whondrs_test <- grow_watersheds %>%
+whondrs_test <- all_grow_watersheds %>%
   filter(!is.na(whondrs_sample_id)) %>%
-  inner_join(read_csv("data/archive/WHONDRS_S19S_Metadata_v3.csv") %>%
-               mutate(whondrs_sample_id = paste0("WHONDRS-", Sample_ID)), by = "whondrs_sample_id")
+  left_join(read_csv("data/archive/WHONDRS_S19S_Metadata_v3.csv") %>%
+              mutate(whondrs_sample_id = paste0("WHONDRS-", Sample_ID)), by = "whondrs_sample_id")
 # ... yes!
 
 # Pulling in the raw WHONDRS dataset, finding sites that included flow data:
 whondrs_db <- read_csv("data/archive/WHONDRS_S19S_Metadata_v3.csv") %>%
-  filter(Discharge_Link != "Not_Provided") %>%
+  filter(!Discharge_Link %in% c("Not_Provided",
+                                # sites with a listed discharge, but don't actually have discharge (typically these have only stage... 
+                                # the provided links are broken, or the flow data doesn't seem to exist, or exist at time of sampling).
+                                "https://criticalzone.org/catalina-jemez/data/datasets/#streamflow-discharge", 
+                                "https://monitormywatershed.org/sites/WCC019/",                       
+                                "http://vecos.vims.edu/StationDetail.aspx?param=PMK034.00&program=CMON", 
+                                "https://criticalzone.org/boulder/data/dataset/2918/",          
+                                "http://data.iutahepscor.org/mdf/river_info/iUTAH_Logan_OD/LR_Mendon_AA/",
+                                "http://data.iutahepscor.org/mdf/river_info/iUTAH_Logan_OD/LR_FB_BA/",  
+                                "http://www.czo.psu.edu/data_scoutlet.html",
+                                "https://criticalzone.org/boulder/data/dataset/2918/")) %>%
   mutate(whondrs_sample_id = paste0("WHONDRS-", Sample_ID)) %>%
-  inner_join(grow_watersheds, by = "whondrs_sample_id") %>%
-  filter(!Sample_ID %in% c("S19S_0038", "S19S_0037", "S19S_0098", "S19S_0097", 
-                           "S19S_0054", "S19S_0034", "S19S_0020", "S19S_0023", 
-                           "S19S_0027", "S19S_0032", "S19S_0057", "S19S_0071")) %>% # sites with a listed discharge, but don't actually have discharge (typically these have only stage... the provided links are broken, or the flow data doesn't seem to exist, or exist at time of sampling).
-  st_as_sf(coords=c("US_Longitude_dec.deg", "US_Latitude_dec.deg"), crs = 4326) %>%
-  select(rowid, Latitude, Longitude, comid, update, flowlink = Discharge_Link) %>%
+  inner_join(all_grow_watersheds, by = "whondrs_sample_id") %>%
+  st_as_sf(coords = c("US_Longitude_dec.deg", "US_Latitude_dec.deg"), crs = 4326) %>%
+  select(Collection_Date, sample_name, Latitude, Longitude, comid, update, flowlink = Discharge_Link) %>%
   distinct()
 
 # any sites with new flow data?
+# Yes, watershed1! (others don't have discharge data)
 unique_new_flow_data <- whondrs_db %>%
   dplyr::filter(update == "new") %>%
   st_drop_geometry() %>%
+  # only new sites that don't share a previous samples' location
+  filter(!Latitude %in% unique(all_grow_watersheds %>% st_drop_geometry() %>% filter(update == "previous") %>% pull(Latitude)) &
+           !Longitude %in% unique(all_grow_watersheds %>% st_drop_geometry() %>% filter(update == "previous") %>% pull(Longitude))) %>%
+  # only sites that don't have a flowlink already
   anti_join(whondrs_db %>% dplyr::filter(update %in% c("missing", "previous") %>% st_drop_geometry()),
-    by = "flowlink") 
+            by = "flowlink") 
 
 # What sites in the GROWdb remain that don't have provided flow data?
-grow_without_whondrs <- grow_watersheds %>%
-  filter((!Latitude %in% whondrs_db$Latitude & !Longitude %in% whondrs_db$Longitude)) %>%
-  distinct(Latitude, Longitude, update, watershed, comid)
+grow_without_whondrs <- all_grow_watersheds %>%
+  filter((!Latitude %in% whondrs_db$Latitude & !Longitude %in% whondrs_db$Longitude)) 
 ```
 
 Finding a USGS gage within 10 km of those sites that did not have a provided stream gauge location.
@@ -476,6 +490,7 @@ nhd <- fread('data/nhd_tabular.csv')
 gages <- readRDS("data/nhd_gages.RDS")
 
 grow_without_whondrs_usgs <- grow_without_whondrs %>%
+  distinct(comid, Latitude, Longitude, watershed) %>%
   rename(COMID = comid) %>%
   filter(watershed != "Off-Network") %>%
   left_join(nhd, by = "COMID") %>%
@@ -512,58 +527,91 @@ gages_within_10km <- function(spid_union){
 nearby_gages <- grow_without_whondrs_usgs %>%
   mutate(gages = map(rowid, gages_within_10km))
 
-#13:00
+gage_meta <- unnest(nearby_gages, cols = gages) %>% 
+  pull(gage) %>% unique() %>% 
+  list_nwis(sites = .) %>%
+  filter(code == "00060") %>%
+  filter(end_date >= "2020-12-31") %>%
+  filter(data_type_cd != "qw")
 
 # Now we have a list of all gages within 10 km of every sample (...that didn't already have a gauge identified in WHONDRSdb). Some samples have more than one gage nearby, so I selected the gage that has the most similar watershed area to our sample site. 
 
 full_list <- unnest(nearby_gages, cols = gages) %>% 
-  select(COMID, gage, update, Latitude, Longitude) %>%
+  select(COMID, gage, Latitude, Longitude) %>%
+  filter(gage %in% gage_meta$site_no) %>%
   inner_join(as_tibble(gages),by = "gage") %>%
   rename(sample_COMID = COMID.x,
          gage_COMID = COMID.y) %>%
-  select(Latitude, Longitude, update, sample_COMID, gage, gage_COMID, TotDASqKM) %>%
+  select(Latitude, Longitude, sample_COMID, gage, gage_COMID, TotDASqKM) %>%
   as_tibble() %>%
   left_join(select(nhd, c(COMID, TotDASqKM)), by = c("sample_COMID" = "COMID")) %>%
   left_join(select(nhd, c(COMID, TotDASqKM)), by = c("gage_COMID" = "COMID")) %>%
   mutate(dif = abs(TotDASqKM.x - TotDASqKM.y)) %>%
-  inner_join(., readRDS("data/conus_watersheds.RDS") %>% select(sample_name, Latitude, Longitude) %>% st_drop_geometry(), by = c("Latitude", "Longitude"))  %>%
-  group_by(sample_name) %>%
-  filter(ifelse(sample_name == "NASQAN2015_114" | sample_name == "NASQAN2014_188", gage == "01646502", dif == min(dif))) %>% # These listed sites have two gages in an identical location. Manually investigated and found that 01646502 is most appropriate.
-  mutate(gage = ifelse(sample_name == "NASQAN2014_185"|sample_name == "NASQAN2015_109" | sample_name == "NASQAN2015_111", "09521100", gage)) %>% # These sites inappropriately select a gage that monitors a diversion.
-  select(sample_name, update, Latitude, Longitude, site_no = gage)
+  group_by(Latitude, Longitude) %>%
+  filter(dif == min(dif)) %>%
+  ungroup() %>%
+  select(Latitude, Longitude, site_no = gage) %>%
+  dplyr::distinct(Latitude, Longitude, site_no, .keep_all = FALSE)
 
-# Large river (Mississippi) where appropriate gages were not technically within the "mainstem" catchment, but are in fact along the mainstem.
-extras <- tibble(sample_name = c("NASQAN2010_127", "NASQAN2012_130", "NASQAN2012_132"),
-                 site_no = c("05587450", "05587450", "05587450"))
 
-full_list <- rbind(full_list, extras) %>%
-  distinct()
+# Manual gage overrides by coordinates
+gage_overrides <- tibble::tribble(
+  ~Latitude, ~Longitude, ~update_gage,
+   32.71866, -114.71884, "09531800", #09521100",
+   38.95116,  -90.37123, "05587450",
+   34.95081, -106.68137, "08330875",
+   38.92956,  -77.11692, "01646502",
+   44.16230, -122.33200, "14162200",
+   45.51750, -122.66920, "14211720",
+   31.85294,  -88.15755, "02469761",
+   44.47610,  -72.12500, "01135150"
+  #32.71866, 	-114.71884
+) %>%
+  mutate(Latitude  = round(Latitude, 4),
+         Longitude = round(Longitude, 4))
 
-# Prepping data
-grow_db <- read_csv("data/mid/GROWdb_StreamCat.csv") %>% 
-  mutate(Date = mdy(Date)) %>%
-  select(sample_name, Date) %>%
-  inner_join(full_list, by = "sample_name") %>%
+# Apply overrides
+full_modified_list <- full_list %>%
+  mutate(Latitude_round  = round(Latitude, 4),
+         Longitude_round = round(Longitude, 4)) %>%
+  left_join(gage_overrides,
+            by = c("Latitude_round" = "Latitude",
+                   "Longitude_round" = "Longitude")) %>%
+  mutate(site_no = ifelse(is.na(update_gage), site_no, update_gage)) %>%
+  select(Latitude, Longitude, site_no) %>%
+  filter((round(Latitude, 4) != round(36.96127, 4) & round(Longitude, 4) != round(-119.02825, 4)) &
+           (round(Latitude, 4) != round(36.95497, 4) & round(Longitude, 4) != round(-119.02375, 4)) & 
+           (round(Latitude, 4) != round(44.21790, 4) & round(Longitude, 4) != round(-122.26500, 4)))
+
+# review gages, do they look good?
+gages_reviewed <- review_gage_pairs(points = full_modified_list,
+                                    gages = gages,
+                                    point_site_col = "site_no",
+                                    gage_site_col = "gage")
+
+nonwhondrs <- full_modified_list %>%
+  inner_join(all_grow_watersheds, by = c("Latitude", "Longitude")) %>%
+  st_drop_geometry() %>%
+  select(sample_name, Collection_Date, site_no) %>%
   mutate(source = "USGS")
+```
 
-grow_for_whondrs <- read_csv("data/mid/GROWdb_StreamCat.csv") %>% 
-  mutate(Date = mdy(Date)) %>%
-  select(sample_name, Sample_ID = Sample, Date)
+Get the flow data:
 
+```{r}
 sites_w_usgs <- whondrs_db %>%
   filter(grepl("waterdata.usgs", flowlink)) %>% # find WHONDRS sites that listed a USGS gage
   separate(flowlink, sep = "site_no=", c("misc", "site_no")) %>%
-  inner_join(grow_for_whondrs, by="Sample_ID") %>%
   as_tibble() %>%
-  select(sample_name, Date, site_no) %>%
+  select(sample_name, Collection_Date, site_no) %>%
   mutate(source = "USGS (from WHONDRS)") %>%
-  rbind(grow_db) # join the USGS WHONDRS and non-WHONDRS USGS datasets together
+  bind_rows(nonwhondrs) # join the USGS WHONDRS and non-WHONDRS USGS datasets together
 
 sites_w_other <- whondrs_db %>%
-  filter(Sample_ID == "S19S_0042" | !grepl("waterdata.usgs", flowlink)) %>% #Shark River Slough requires USGS download from somewhere else
-  inner_join(grow_for_whondrs, by = "Sample_ID") %>%
+  # Shark River Slough requires USGS download from somewhere else
+  filter(flowlink == "https://waterdata.usgs.gov/usa/nwis/uv?site_no=252230081021300" | !grepl("waterdata.usgs", flowlink)) %>% 
   as_tibble() %>%
-  select(sample_name, Sample_ID, Date, flowlink)
+  select(Latitude, Longitude, Date = Collection_Date, flowlink)
 ```
 
 Getting the 20th and 80th percentile flows (starting as early as 1980 water year if available,, ending in 2020) and daily discharge on the date of sampling for sites with nearby USGS gages.
@@ -572,13 +620,12 @@ Getting the 20th and 80th percentile flows (starting as early as 1980 water year
 usgs_list <- sites_w_usgs %>%
   distinct(site_no)
 
-#
-
 parameterCd <- "00060" #DAILY DISCHARGE CODE
 startDate <- "1979-10-01"
 endDate <- "2020-09-30"
+
 discharge_usgs <- readNWISdv(usgs_list$site_no, parameterCd, startDate, endDate) %>%
-  rename(CFS=4) %>% 
+  rename(CFS = 4) %>%
   dplyr::filter(X_00060_00003_cd == "A" | X_00060_00003_cd == "A e" |
                   X_00060_00003_cd == "A R" | X_00060_00003_cd == "A [4]" |
                   X_00060_00003_cd == "A <"| X_00060_00003_cd == "A >") %>% # only data that has been approved by USGS
@@ -588,23 +635,65 @@ discharge_usgs <- readNWISdv(usgs_list$site_no, parameterCd, startDate, endDate)
   dplyr::group_by(site_no) %>%
   dplyr::mutate(flow_record = ifelse((min(wyear) - max(wyear) == 0), paste0(min(wyear)), paste0(min(wyear), " - ", max(wyear))),
                 percentile_20 = quantile(CFS, 0.20, na.rm=F),
-                percentile_80 = quantile(CFS, 0.80, na.rm=F)) %>%
-  mutate(gage_id = paste0("USGS-", site_no)) %>%
-  inner_join(sites_w_usgs,by=c("site_no", "Date")) %>%
+                percentile_80 = quantile(CFS, 0.80, na.rm=F),
+                n_months = n_distinct(month)) %>%
+  mutate(gage_id = paste0("USGS-", site_no),
+         gage_seasonal = ifelse(n_months != 12, "yes", "no")) %>%
+  inner_join(sites_w_usgs, by = c("site_no", "Date" = "Collection_Date")) %>%
   filter(!is.na(gage_id)) %>%
   ungroup() %>%
   mutate(flowlink = paste0("https://waterdata.usgs.gov/usa/nwis/dv?referred_module=sw&site_no=", site_no)) %>%
-  dplyr::select(sample_name, Date, source, gage_id, CFS, flow_record, percentile_20, percentile_80, flowlink)
+  dplyr::select(sample_name, Date, source, gage_id, gage_seasonal, CFS, flow_record, percentile_20, percentile_80, flowlink)
 
-write_csv(discharge_usgs, "data/mid/grow_discharge_usgs.csv")
+write_csv(discharge_usgs, "data/grow_discharge_usgs.csv")
+
+# which are missing data, even though they shouldn't?
+missing <- usgs_list %>% as_tibble() %>% anti_join(., discharge_usgs %>% mutate(site_no = gsub("^USGS-", "", gage_id)), by = "site_no")
+
+missing_meta <- gage_meta %>%
+  filter(site_no %in% missing$site_no)
+```
+
+# Continuous data
+
+```{r}
+# Continuous (not daily) USGS (Sacramento and Altamaha GROW samples)
+parameterCd <- "00060" #DISCHARGE CODE
+startDate <- "1979-10-01"
+endDate <- "2020-09-30"
+
+continuous_usgs <- readNWISuv(missing$site_no, parameterCd, startDate, endDate) %>%
+  rename(CFS = 4) %>% 
+  dplyr::filter(X_00060_00000_cd == "A" | X_00060_00000_cd == "A e" |
+                  X_00060_00000_cd == "A R" | X_00060_00000_cd == "A [4]" |
+                  X_00060_00000_cd== "A <" | X_00060_00000_cd == "A >") %>%
+  dplyr::mutate(dateTime = ymd_hms(dateTime)) %>%
+  dplyr::mutate(Date = as_date(dateTime)) %>%
+  filter(!is.na(dateTime)) %>%
+  group_by(site_no, Date) %>%
+  summarize(CFS = mean(CFS)) %>%
+  ungroup() %>%
+  dplyr::mutate(month = lubridate::month(Date)) %>% 
+  dplyr::mutate(year = lubridate::year(Date)) %>%
+  dplyr::mutate(wyear = as.numeric(ifelse(month > 9, year + 1, year))) %>%
+  group_by(site_no) %>%
+  dplyr::mutate(flow_record = ifelse((min(wyear) - max(wyear) == 0), paste0(min(wyear)), paste0(min(wyear), " - ", max(wyear))),
+                percentile_20 = quantile(CFS, 0.20, na.rm=F),
+                percentile_80 = quantile(CFS, 0.80, na.rm=F)) %>%
+  mutate(gage_id = paste0("USGS-", site_no)) %>%
+  mutate(flowlink = paste0("https://waterdata.usgs.gov/usa/nwis/uv?referred_module=sw&site_no=", site_no)) %>%
+  mutate(source = "USGS",
+         gage_seasonal = ifelse(n_distinct(month) == 12, "no", "yes")) %>%
+  inner_join(sites_w_usgs %>% select(site_no, sample_name, Collection_Date), by = c("site_no", "Date" = "Collection_Date")) %>%
+  dplyr::select(Date, sample_name, source, gage_id, gage_seasonal, CFS, flow_record, percentile_20, percentile_80, flowlink)
 ```
 
 Now we are doing the same thing for WHONDRS sites with flow listed from non-USGS sources (i.e., getting the 20th and 80th percentile flows - using period of record, starting as early as 1980 water year - and daily discharge on the date of sampling). PLUS, a few USGS sites only report continuous data, and therefore the above code didn't work to pull data. We are pulling continuous data for those samples here as well.
 
 ```{r}
-#Colorado Department of Water Resources (cachelapoudre_2019_sw_WHONDRS-S19S_0077)
+# Colorado Department of Water Resources (cachelapoudre_2019_sw_WHONDRS-S19S_0077)
 poudre <- read_csv("data/archive/flow/Poudre.csv") %>%
-  mutate(sample_name = "cachelapoudre_2019_sw_WHONDRS-S19S_0077") %>%
+  mutate(flowlink = "https://dwr.state.co.us/surfacewater/data/detail_graph.aspx?ID=CLAFTCCO&MTYPE=DISCHRG") %>%
   rename(a = 5,
          CFS = 3,
          date = 2) %>%
@@ -620,14 +709,15 @@ poudre <- read_csv("data/archive/flow/Poudre.csv") %>%
   mutate(percentile_20 = quantile(CFS, 0.20, na.rm = F),
          percentile_80 = quantile(CFS, 0.80, na.rm = F)) %>%
   mutate(gage_id = paste0("CODWR-", Abbrev),
-         source = "Colorado DWR (from WHONDRS)") %>%
-  inner_join(sites_w_other, by = c("sample_name", "Date")) %>%
+         source = "Colorado DWR (from WHONDRS)",
+         gage_seasonal = ifelse(n_distinct(month) == 12, "no", "yes")) %>%
+  inner_join(sites_w_other, by = c("flowlink", "Date")) %>%
   filter(!is.na(gage_id)) %>%
-  dplyr::select(sample_name, Date, source, gage_id, CFS, flow_record, percentile_20, percentile_80, flowlink)
+  dplyr::select(Date, Latitude, Longitude, source, gage_id, CFS, gage_seasonal, flow_record, percentile_20, percentile_80, flowlink)
 
-#Oregon WRD (crookedriver_2019_sw_WHONDRS-S19S_0041)
+# Oregon WRD (crookedriver_2019_sw_WHONDRS-S19S_0041)
 crooked <- read_csv("data/archive/flow/Crooked.csv") %>%
-  mutate(sample_name = "crookedriver_2019_sw_WHONDRS-S19S_0041") %>%
+  mutate(flowlink = "https://apps.wrd.state.or.us/apps/sw/hydro_near_real_time/display_hydro_graph.aspx?station_nbr=14081500") %>%
   mutate(Date = lubridate::mdy(record_date)) %>%
   rename(CFS = 3) %>%
   filter(!is.na(CFS)) %>%
@@ -640,76 +730,13 @@ crooked <- read_csv("data/archive/flow/Crooked.csv") %>%
   mutate(percentile_20 = quantile(CFS, 0.20, na.rm = F),
          percentile_80 = quantile(CFS, 0.80, na.rm = F)) %>%
   mutate(gage_id = paste0("ORWRD-", station_nbr),
-         source = "Oregon WRD (from WHONDRS)") %>%
-  inner_join(sites_w_other,by = c("sample_name", "Date")) %>%
+         source = "Oregon WRD (from WHONDRS)",
+       gage_seasonal = ifelse(n_distinct(month) == 12, "no", "yes")) %>%
+  inner_join(sites_w_other,by = c("flowlink", "Date")) %>%
   filter(!is.na(gage_id)) %>%
-  dplyr::select(sample_name, Date, source, gage_id, CFS, flow_record, percentile_20, percentile_80, flowlink)
+  dplyr::select(Date, Latitude, Longitude, source, gage_id, gage_seasonal, CFS, flow_record, percentile_20, percentile_80, flowlink)
 
-#Weird USGS ("sharkriverslough_2019_sw_WHONDRS-S19S_0042")
-shark <- read_csv("data/archive/flow/SharkRiver.csv") %>%
-  mutate(sample_name = "sharkriverslough_2019_sw_WHONDRS-S19S_0042") %>%
-  mutate(Date = lubridate::mdy(datetime)) %>%
-  rename(CFS = 6,
-         a = 7) %>%
-  filter(!is.na(a)) %>%
-  filter(!is.na(CFS)) %>%
-  group_by(sample_name, site_no, Date) %>%
-  summarize(CFS = mean(CFS)) %>%
-  ungroup() %>%
-  dplyr::mutate(month = lubridate::month(Date)) %>% 
-  dplyr::mutate(year = lubridate::year(Date)) %>%
-  dplyr::mutate(wyear = ifelse(month > 9, year + 1, year)) %>%
-  dplyr::mutate(wyear = as.numeric(wyear)) %>%
-  filter(wyear >= 1980 & wyear <= 2020) %>%
-  mutate(flow_record = ifelse((min(wyear) - max(wyear) == 0), paste0(min(wyear)), paste0(min(wyear), " - ", max(wyear)))) %>% 
-  mutate(percentile_20 = quantile(CFS, 0.20, na.rm = F),
-         percentile_80 = quantile(CFS, 0.80, na.rm = F)) %>%
-  mutate(gage_id = paste0("USGS-252230081021300"),
-         source = "USGS (from WHONDRS)") %>%
-  inner_join(sites_w_other, by = c("sample_name", "Date")) %>%
-  filter(!is.na(gage_id)) %>%
-  dplyr::select(sample_name, Date, source, gage_id, CFS, flow_record, percentile_20, percentile_80, flowlink)
-
-#Continuous (not daily) USGS (Sacramento and Altamaha GROW samples)
-parameterCd <- "00060" #DISCHARGE CODE
-startDate <- "1979-10-01"
-endDate <- "2020-09-30"
-continuous_usgs <- readNWISuv(c("02226160", "11447650"), parameterCd, startDate, endDate) %>%
-  rename(CFS=4) %>% 
-  dplyr::filter(X_00060_00000_cd == "A" | X_00060_00000_cd == "A e" |
-                  X_00060_00000_cd == "A R" | X_00060_00000_cd == "A [4]" |
-                  X_00060_00000_cd== "A <" | X_00060_00000_cd == "A >") %>%
-  dplyr::mutate(dateTime = ymd_hms(dateTime)) %>%
-  dplyr::mutate(Date = as_date(dateTime)) %>%
-  group_by(site_no, Date) %>%
-  summarize(CFS = mean(CFS)) %>%
-  ungroup() %>%
-  dplyr::mutate(month = lubridate::month(Date)) %>% 
-  dplyr::mutate(year = lubridate::year(Date)) %>%
-  dplyr::mutate(wyear = as.numeric(ifelse(month > 9, year + 1, year))) %>%
-  group_by(site_no) %>%
-  dplyr::mutate(flow_record = ifelse((min(wyear) - max(wyear) == 0), paste0(min(wyear)), paste0(min(wyear), " - ", max(wyear))),
-                percentile_20 = quantile(CFS, 0.20, na.rm=F),
-                percentile_80 = quantile(CFS, 0.80, na.rm=F)) %>%
-  mutate(gage_id = paste0("USGS-", site_no)) %>%
-  mutate(flowlink = paste0("https://waterdata.usgs.gov/usa/nwis/uv?referred_module=sw&site_no=", site_no)) %>%
-  mutate(source = "USGS")
-
-altamaha_sites <- tibble(sample_name = c("NASQAN2014_193", "NASQAN2015_172", "NASQAN2015_174"),
-                         Date = c("2014-10-22", "2015-05-20", "2015-02-10")) %>%
-  mutate(Date = as_date(Date),
-         site_no = "02226160") %>%
-  left_join(continuous_usgs, by = c("site_no", "Date")) %>%
-  dplyr::select(sample_name, Date, source, gage_id, CFS, flow_record, percentile_20, percentile_80, flowlink)
-
-sacramento_sites <- tibble(sample_name = c("NASQAN2015_042", "NASQAN2015_206", "NASQAN2016_016", "NASQAN2016_024"),
-                           Date = c("2015-07-27", "2015-12-09", "2016-01-27", "2016-06-22")) %>%
-  mutate(Date = as_date(Date),
-         site_no = "11447650") %>%
-  left_join(continuous_usgs, by = c("site_no", "Date")) %>%
-  dplyr::select(sample_name, Date, source, gage_id, CFS, flow_record, percentile_20, percentile_80, flowlink)
-
-#ORNL SFA (eastforkpoplarcreek_2019_sw_WHONDRS-S19S_0039)
+# ORNL SFA (eastforkpoplarcreek_2019_sw_WHONDRS-S19S_0039)
 poplar_q_fils <- list.files("data/archive/flow/poplarcreek/",
                             recursive = TRUE,
                             full.names = TRUE)
@@ -725,13 +752,14 @@ poplar <-  plyr::ldply(poplar_q_fils, read_csv) %>%
   filter(wyear >= 1980 & wyear <= 2020) %>%
   mutate(flow_record = ifelse((min(wyear) - max(wyear) == 0), paste0(min(wyear)), paste0(min(wyear), " - ", max(wyear)))) %>%
   mutate(percentile_20 = quantile(CFS, 0.20, na.rm = F),
-         percentile_80 = quantile(CFS, 0.80, na.rm = F)) %>%
+         percentile_80 = quantile(CFS, 0.80, na.rm = F),
+         gage_seasonal = ifelse(n_distinct(month) == 12, "no", "yes")) %>%
   mutate(gage_id = paste0("ORNL- EF Poplar Creek"),
          source = "ORNL - EF (from WHONDRS)",
-         sample_name = "eastforkpoplarcreek_2019_sw_WHONDRS-S19S_0039") %>%
-  inner_join(sites_w_other, by = c("sample_name", "Date")) %>%
+         flowlink = "https://www.esd.ornl.gov/programs/rsfa/data.shtml") %>%
+  inner_join(sites_w_other, by = c("flowlink", "Date")) %>%
   filter(!is.na(gage_id)) %>%
-  dplyr::select(sample_name, Date, source, gage_id, CFS, flow_record, percentile_20, percentile_80, flowlink)
+  dplyr::select(Date, Latitude, Longitude, source, gage_id, gage_seasonal, CFS, flow_record, percentile_20, percentile_80, flowlink)
 
 #LTER (watershed3_2019_sw_WHONDRS-S19S_0084)
 watershed3 <- read_csv("data/archive/flow/watershed3.csv") %>%
@@ -747,13 +775,14 @@ watershed3 <- read_csv("data/archive/flow/watershed3.csv") %>%
   filter(wyear >= 1980 & wyear <= 2020) %>%
   mutate(flow_record = ifelse((min(wyear) - max(wyear) == 0), paste0(min(wyear)), paste0(min(wyear), " - ", max(wyear)))) %>%
   mutate(percentile_20 = quantile(CFS, 0.20, na.rm = F),
-         percentile_80 = quantile(CFS, 0.80, na.rm = F)) %>%
+         percentile_80 = quantile(CFS, 0.80, na.rm = F),
+         gage_seasonal = ifelse(n_distinct(month) == 12, "no", "yes")) %>%
   mutate(gage_id = paste0("LTER - Watershed 3"),
          source = "LTER (from WHONDRS)",
-         sample_name = "watershed3_2019_sw_WHONDRS-S19S_0084") %>%
-  inner_join(sites_w_other, by = c("sample_name", "Date")) %>%
+         flowlink = "https://portal.lternet.edu/nis/mapbrowse?scope=knb-lter-hbr&identifier=1") %>%
+  inner_join(sites_w_other, by = c("flowlink", "Date")) %>%
   filter(!is.na(gage_id)) %>%
-  dplyr::select(sample_name, Date, source, gage_id, CFS, flow_record, percentile_20, percentile_80, flowlink)
+  dplyr::select(Date, Latitude, Longitude, source, gage_id, gage_seasonal, CFS, flow_record, percentile_20, percentile_80, flowlink)
 
 watershed1 <- read_csv("data/archive/flow/watershed3.csv") %>%
   filter(WS == 1) %>%
@@ -768,22 +797,23 @@ watershed1 <- read_csv("data/archive/flow/watershed3.csv") %>%
   filter(wyear >= 1980 & wyear <= 2020) %>%
   mutate(flow_record = ifelse((min(wyear) - max(wyear) == 0), paste0(min(wyear)), paste0(min(wyear), " - ", max(wyear)))) %>%
   mutate(percentile_20 = quantile(CFS, 0.20, na.rm = F),
-         percentile_80 = quantile(CFS, 0.80, na.rm = F)) %>%
+         percentile_80 = quantile(CFS, 0.80, na.rm = F),
+          gage_seasonal = ifelse(n_distinct(month) == 12, "no", "yes")) %>%
   mutate(gage_id = paste0("LTER - Watershed 1"),
          source = "LTER (from WHONDRS)",
-         sample_name = "watershed01_2019_sed_WHONDRS-S19S_0068") %>%
-  inner_join(sites_w_other, by = c("sample_name", "Date")) %>%
+         flowlink = "https://andrewsforest.oregonstate.edu/sites/default/files/lter/data/weather/portal/GSWS01/data/index.html") %>%
+  inner_join(sites_w_other, by = c("flowlink", "Date")) %>%
   filter(!is.na(gage_id)) %>%
-  dplyr::select(sample_name, Date, source, gage_id, CFS, flow_record, percentile_20, percentile_80, flowlink)
+  dplyr::select(Date, Latitude, Longitude, source, gage_id, CFS, flow_record, percentile_20, percentile_80, flowlink)
 
 #NEON SITES (adapted from Nic Gubbins's code for pulling NEON datafiles in)
-neon_q_fils <- list.files("data/mid/flow/NEON/",
+neon_q_fils <- list.files("data/archive/flow/NEON_2026/",
                           recursive = TRUE,
                           full.names = TRUE)
 
 rel_file <- grep("csd_continuousDischarge", neon_q_fils, value = TRUE)
 
-all_q <- map_dfr(rel_file, read_csv)
+all_q <- map_dfr(rel_file, fread)
 
 neon <- all_q %>%
   select(siteID, endDate, maxpostDischarge) %>%
@@ -792,7 +822,7 @@ neon <- all_q %>%
   mutate(CFS = maxpostDischarge * 0.0353146667)  
 
 all_neon <- neon %>%
-  group_by(siteID,Date) %>%
+  group_by(siteID, Date) %>%
   summarize(CFS = mean(CFS)) %>%
   ungroup() %>%
   dplyr::mutate(month = lubridate::month(Date)) %>% 
@@ -803,212 +833,137 @@ all_neon <- neon %>%
   group_by(siteID) %>%
   mutate(flow_record = ifelse((min(wyear) - max(wyear) == 0), paste0(min(wyear)), paste0(min(wyear), " - ", max(wyear)))) %>%
   mutate(percentile_20 = quantile(CFS, 0.20, na.rm = F),
-         percentile_80 = quantile(CFS, 0.80, na.rm = F)) %>%
-  mutate(sample_name = case_when(siteID == "ARIK" ~ "arikareeriver_2019_sw_WHONDRS-S19S_0023",
-                                 siteID == "BLWA" ~ "blackwarrior_2019_sw_WHONDRS-S19S_0021",
-                                 siteID == "COMO" ~ "comocreek_2019_sw_WHONDRS-S19S_0026",
-                                 siteID == "HOPB" ~ "hopbrook_2019_sw_WHONDRS-S19S_0012",
-                                 siteID == "LECO" ~ "lecontecreek_2019_sw_WHONDRS-S19S_0018",
-                                 siteID == "LEWI" ~ "lewisrun_2019_sw_WHONDRS-S19S_0014",
-                                 siteID == "MART" ~ "marthacreek_2019_sw_WHONDRS-S19S_0030",
-                                 siteID == "MCRA" ~ "mcraecreek_2019_sw_WHONDRS-S19S_0031",
-                                 siteID == "POSE" ~ "poseycreek_2019_sw_WHONDRS-S19S_0013",
-                                 siteID == "PRIN" ~ "pringlecreek_2019_sw_WHONDRS-S19S_0025",
-                                 siteID == "TECR" ~ "teakettle2_2019_sw_WHONDRS-S19S_0032",
-                                 siteID == "WLOU" ~ "weststlouiscreek_2019_sw_WHONDRS-S19S_0027",
-                                 siteID == "TOMB" ~ "tombigeeriver_2019_sw_WHONDRS-S19S_0020"),
+         percentile_80 = quantile(CFS, 0.80, na.rm = F),
+         gage_seasonal = ifelse(n_distinct(month) == 12, "no", "yes")) %>%
+  mutate(sample_short = case_when(siteID == "ARIK" ~ "arikareeriver",
+                                 siteID == "BLWA" ~ "blackwarrior",
+                                 siteID == "COMO" ~ "comocreek",
+                                 siteID == "HOPB" ~ "hopbrook",
+                                 siteID == "LECO" ~ "lecontecreek",
+                                 siteID == "LEWI" ~ "lewisrun",
+                                 siteID == "MART" ~ "marthacreek",
+                                 siteID == "MCRA" ~ "mcraecreek",
+                                 siteID == "POSE" ~ "poseycreek",
+                                 siteID == "PRIN" ~ "pringlecreek",
+                                 siteID == "TECR" ~ "teakettle2",
+                                 siteID == "WALK" ~ "walkerbranch",
+                                 siteID == "WLOU" ~ "weststlouiscreek",
+                                 siteID == "TOMB" ~ "tombigeeriver"),
          gage_id = paste0("NEON-", siteID)) %>%
-  inner_join(sites_w_other, by = c("sample_name", "Date")) %>%
+  inner_join(all_grow_watersheds %>% mutate(sample_short = sub("_.*", "", sample_name)) %>% select(sample_name, sample_short, Collection_Date), by = c("sample_short", "Date" = "Collection_Date")) %>%
   filter(!is.na(gage_id)) %>%
   mutate(gage_id = paste0("NEON-", siteID),
-         source = "NEON (from WHONDRS)") %>%
+         source = "NEON (from WHONDRS)",
+         flowlink = "https://data.neonscience.org/home") %>%
   ungroup() %>%
   dplyr::select(sample_name, Date, source, gage_id, CFS, flow_record, percentile_20, percentile_80, flowlink)
 ```
 
 
-
-UPDATED APPROACH
-
 ```{r}
-# ---- lookup table ----
-site_lookup <- sites_w_other %>%
-  mutate(
-    Latitude = round(Latitude, 6),
-    Longitude = round(Longitude, 6)
-  ) %>%
-  select(rowid, Latitude, Longitude, Date, flowlink) %>%
-  distinct()
+library(data.table)
+library(lubridate)
 
-# ---- Poudre ----
-poudre <- read_csv("data/archive/flow/Poudre.csv") %>%
-  mutate(Latitude = 40.664030, Longitude = -105.223141) %>%
-  rename(a = 5, CFS = 3, date = 2) %>%
-  filter(a == "A") %>%
-  mutate(Date = lubridate::mdy(date)) %>%
-  filter(!is.na(CFS)) %>%
-  mutate(
-    month = lubridate::month(Date),
-    year = lubridate::year(Date),
-    wyear = as.numeric(ifelse(month > 9, year + 1, year))
-  ) %>%
-  filter(wyear >= 1980 & wyear <= 2020) %>%
-  mutate(
-    flow_record = ifelse(min(wyear) - max(wyear) == 0,
-                         paste0(min(wyear)),
-                         paste0(min(wyear), " - ", max(wyear))),
-    percentile_20 = quantile(CFS, 0.20, na.rm = FALSE),
-    percentile_80 = quantile(CFS, 0.80, na.rm = FALSE),
-    gage_id = paste0("CODWR-", Abbrev),
-    source = "Colorado DWR (from WHONDRS)"
-  ) %>%
-  inner_join(site_lookup, by = c("Latitude", "Longitude", "Date")) %>%
-  select(rowid, Latitude, Longitude, Date, source, gage_id, CFS,
-         flow_record, percentile_20, percentile_80, flowlink)
+setDT(all_q)
 
-# ---- Crooked ----
-crooked <- read_csv("data/archive/flow/Crooked.csv") %>%
-  mutate(Latitude = 44.300082, Longitude = -120.858290) %>%
-  mutate(Date = lubridate::mdy(record_date)) %>%
-  rename(CFS = 3) %>%
-  filter(!is.na(CFS)) %>%
-  mutate(
-    month = lubridate::month(Date),
-    year = lubridate::year(Date),
-    wyear = as.numeric(ifelse(month > 9, year + 1, year))
-  ) %>%
-  filter(wyear >= 1980 & wyear <= 2020) %>%
-  mutate(
-    flow_record = ifelse(min(wyear) - max(wyear) == 0,
-                         paste0(min(wyear)),
-                         paste0(min(wyear), " - ", max(wyear))),
-    percentile_20 = quantile(CFS, 0.20, na.rm = FALSE),
-    percentile_80 = quantile(CFS, 0.80, na.rm = FALSE),
-    gage_id = paste0("ORWRD-", station_nbr),
-    source = "Oregon WRD (from WHONDRS)"
-  ) %>%
-  inner_join(site_lookup, by = c("Latitude", "Longitude", "Date")) %>%
-  select(rowid, Latitude, Longitude, Date, source, gage_id, CFS,
-         flow_record, percentile_20, percentile_80, flowlink)
+neon_daily <- all_q[
+  !is.na(maxpostDischarge),
+  .(
+    siteID,
+    Date = as.Date(substr(endDate, 1, 10)),
+    CFS = maxpostDischarge * 0.0353146667
+  )
+][
+  !is.na(Date)
+][
+  ,
+  .(CFS = mean(CFS, na.rm = TRUE)),
+  by = .(siteID, Date)
+][
+  ,
+  `:=`(
+    month = month(Date),
+    year = year(Date)
+  )
+][
+  ,
+  wyear := fifelse(month > 9, year + 1, year)
+][
+  wyear >= 1980 & wyear <= 2020
+]
 
-# ---- Shark River ----
-shark <- read_csv("data/archive/flow/SharkRiver.csv") %>%
-  mutate(Latitude = 25.409820, Longitude = -80.964230) %>%
-  mutate(Date = lubridate::mdy(datetime)) %>%
-  rename(CFS = 6, a = 7) %>%
-  filter(!is.na(a), !is.na(CFS)) %>%
-  group_by(site_no, Date) %>%
-  summarize(CFS = mean(CFS), .groups = "drop") %>%
-  mutate(
-    month = lubridate::month(Date),
-    year = lubridate::year(Date),
-    wyear = as.numeric(ifelse(month > 9, year + 1, year))
+neon_stats <- neon_daily %>%
+  group_by(siteID) %>%
+  summarize(
+    flow_record = if_else(
+      min(wyear, na.rm = TRUE) == max(wyear, na.rm = TRUE),
+      as.character(min(wyear, na.rm = TRUE)),
+      paste0(min(wyear, na.rm = TRUE), " - ", max(wyear, na.rm = TRUE))
+    ),
+    percentile_20 = quantile(CFS, 0.20, na.rm = TRUE),
+    percentile_80 = quantile(CFS, 0.80, na.rm = TRUE),
+    gage_seasonal = if_else(n_distinct(month) == 12, "no", "yes"),
+    .groups = "drop"
   ) %>%
-  filter(wyear >= 1980 & wyear <= 2020) %>%
   mutate(
-    flow_record = ifelse(min(wyear) - max(wyear) == 0,
-                         paste0(min(wyear)),
-                         paste0(min(wyear), " - ", max(wyear))),
-    percentile_20 = quantile(CFS, 0.20, na.rm = FALSE),
-    percentile_80 = quantile(CFS, 0.80, na.rm = FALSE),
-    gage_id = "USGS-252230081021300",
-    source = "USGS (from WHONDRS)"
-  ) %>%
-  inner_join(site_lookup, by = c("Latitude", "Longitude", "Date")) %>%
-  select(rowid, Latitude, Longitude, Date, source, gage_id, CFS,
-         flow_record, percentile_20, percentile_80, flowlink)
+    sample_short = case_when(
+      siteID == "ARIK" ~ "arikareeriver",
+      siteID == "BLWA" ~ "blackwarrior",
+      siteID == "COMO" ~ "comocreek",
+      siteID == "HOPB" ~ "hopbrook",
+      siteID == "LECO" ~ "lecontecreek",
+      siteID == "LEWI" ~ "lewisrun",
+      siteID == "MART" ~ "marthacreek",
+      siteID == "MCRA" ~ "mcraecreek",
+      siteID == "POSE" ~ "poseycreek",
+      siteID == "PRIN" ~ "pringlecreek",
+      siteID == "TECR" ~ "teakettle2",
+      siteID == "WALK" ~ "walkerbranch",
+      siteID == "WLOU" ~ "weststlouiscreek",
+      siteID == "TOMB" ~ "tombigeeriver",
+      TRUE ~ NA_character_
+    ),
+    gage_id = paste0("NEON-", siteID),
+    source = "NEON (from WHONDRS)",
+    flowlink = "https://data.neonscience.org/home"
+  )
 
-# ---- Poplar Creek ----
-poplar_q_fils <- list.files("data/archive/flow/poplarcreek/", recursive = TRUE, full.names = TRUE)
+grow_lookup <- all_grow_watersheds %>%
+  mutate(sample_short = sub("_.*", "", sample_name)) %>%
+  select(sample_name, sample_short, Date = Collection_Date)
 
-poplar <- plyr::ldply(poplar_q_fils, read_csv) %>%
-  mutate(Latitude = 35.966243, Longitude = -84.357361) %>%
-  mutate(Date = as.Date(substr(DateTime, 1, 10))) %>%
-  group_by(Date) %>%
-  summarize(CFS = mean(Q.cms) * 35.314666212661, .groups = "drop") %>%
-  mutate(
-    month = lubridate::month(Date),
-    year = lubridate::year(Date),
-    wyear = as.numeric(ifelse(month > 9, year + 1, year))
+all_neon <- grow_lookup %>%
+  inner_join(neon_stats, by = "sample_short") %>%
+  left_join(
+    neon_daily %>% select(siteID, Date, CFS),
+    by = c("siteID", "Date")
   ) %>%
-  filter(wyear >= 1980 & wyear <= 2020) %>%
-  mutate(
-    flow_record = ifelse(min(wyear) - max(wyear) == 0,
-                         paste0(min(wyear)),
-                         paste0(min(wyear), " - ", max(wyear))),
-    percentile_20 = quantile(CFS, 0.20, na.rm = FALSE),
-    percentile_80 = quantile(CFS, 0.80, na.rm = FALSE),
-    gage_id = "ORNL- EF Poplar Creek",
-    source = "ORNL - EF (from WHONDRS)"
-  ) %>%
-  inner_join(site_lookup, by = c("Latitude", "Longitude", "Date")) %>%
-  select(rowid, Latitude, Longitude, Date, source, gage_id, CFS,
-         flow_record, percentile_20, percentile_80, flowlink)
-
-# ---- Watershed 3 ----
-watershed3 <- read_csv("data/archive/flow/watershed3.csv") %>%
-  filter(WS == 3) %>%
-  mutate(Latitude = 43.954722, Longitude = -71.722778) %>%
-  mutate(CFS = ((Streamflow * 424000000000) * 0.0000000353147) / 86400) %>%
-  group_by(DATE) %>%
-  summarize(CFS = mean(CFS), .groups = "drop") %>%
-  mutate(Date = as.Date(DATE)) %>%
-  mutate(
-    month = lubridate::month(Date),
-    year = lubridate::year(Date),
-    wyear = as.numeric(ifelse(month > 9, year + 1, year))
-  ) %>%
-  filter(wyear >= 1980 & wyear <= 2020) %>%
-  mutate(
-    flow_record = ifelse(min(wyear) - max(wyear) == 0,
-                         paste0(min(wyear)),
-                         paste0(min(wyear), " - ", max(wyear))),
-    percentile_20 = quantile(CFS, 0.20, na.rm = FALSE),
-    percentile_80 = quantile(CFS, 0.80, na.rm = FALSE),
-    gage_id = "LTER - Watershed 3",
-    source = "LTER (from WHONDRS)"
-  ) %>%
-  inner_join(site_lookup, by = c("Latitude", "Longitude", "Date")) %>%
-  select(rowid, Latitude, Longitude, Date, source, gage_id, CFS,
-         flow_record, percentile_20, percentile_80, flowlink)
-
-# ---- Watershed 1 ----
-watershed1 <- read_csv("data/archive/flow/watershed3.csv") %>%
-  filter(WS == 1) %>%
-  mutate(Latitude = 44.207316, Longitude = -122.258091) %>%
-  mutate(CFS = ((Streamflow * 424000000000) * 0.0000000353147) / 86400) %>%
-  group_by(DATE) %>%
-  summarize(CFS = mean(CFS), .groups = "drop") %>%
-  mutate(Date = as.Date(DATE)) %>%
-  mutate(
-    month = lubridate::month(Date),
-    year = lubridate::year(Date),
-    wyear = as.numeric(ifelse(month > 9, year + 1, year))
-  ) %>%
-  filter(wyear >= 1980 & wyear <= 2020) %>%
-  mutate(
-    flow_record = ifelse(min(wyear) - max(wyear) == 0,
-                         paste0(min(wyear)),
-                         paste0(min(wyear), " - ", max(wyear))),
-    percentile_20 = quantile(CFS, 0.20, na.rm = FALSE),
-    percentile_80 = quantile(CFS, 0.80, na.rm = FALSE),
-    gage_id = "LTER - Watershed 1",
-    source = "LTER (from WHONDRS)"
-  ) %>%
-  inner_join(site_lookup, by = c("Latitude", "Longitude", "Date")) %>%
-  select(rowid, Latitude, Longitude, Date, source, gage_id, CFS,
-         flow_record, percentile_20, percentile_80, flowlink)
+  select(
+    sample_name, Date, source, gage_id, CFS,
+    flow_record, percentile_20, percentile_80, flowlink
+  )
 ```
 
-
-Binding all the flow data together... and producing to our final GROWdb geospatial dataset!
+Binding all the flow data together... and producing our final GROWdb geospatial dataset!
 ```{r}
-all_flow <- rbind(altamaha_sites, all_neon, crooked, discharge_usgs, poplar, poudre, sacramento_sites, shark, watershed3) %>%
-  write_csv("data/mid/all_grow_flow_data.csv") %>%
-  select(-2)
+conus_sites_update <- read_csv("data/date_lat_long_grow_KKA_05.05.26.csv") %>%
+  mutate(Longitude = ifelse(sample_name == "marshallgulch_2019_sw_WHONDRS-S19S_0035", -110.75784, Longitude),
+         Latitude = ifelse(sample_name == "marshallgulch_2019_sw_WHONDRS-S19S_0035", 32.42735, Latitude)) %>%
+  #filter(grepl("_sed_|_bw_", sample_name, ignore.case = TRUE)) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269, remove = FALSE) %>%
+  .[tigris::states() %>% filter(!STUSPS %in% c("HI", "PR", "AK")) %>% st_buffer(10000),]
 
-final_database <- read_csv("data/mid/GROWdb_StreamCat.csv") %>%
-  left_join(all_flow, by = "sample_name") %>%
-  select(-geom) %>%
-  write_csv("GROWdb_with_vars.csv")
+
+flow_one <- bind_rows(crooked, poplar, poudre, watershed3, watershed1) %>%
+  st_drop_geometry() %>%
+  inner_join(conus_sites_update %>% st_drop_geometry(), by = c("Latitude", "Longitude"))
+
+flow_two <- bind_rows(continuous_usgs, discharge_usgs, all_neon) %>%
+  ungroup() %>%
+  select(-site_no) %>%
+  st_drop_geometry() %>%
+  inner_join(conus_sites_update %>% st_drop_geometry(), by = "sample_name")
+
+
+write_csv("data/all_grow_flow_data.csv")
 ```
