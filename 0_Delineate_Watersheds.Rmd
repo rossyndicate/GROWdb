@@ -1,0 +1,356 @@
+---
+title: "GROWdb_Update"
+author: "Katie Willi"
+date: "2026-04-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(mapview)
+library(nngeo)
+library(nhdplusTools)
+library(sf)
+
+# Sources getXYWatersheds(), add_new_locations(), and review helpers.
+# getXYWatersheds() no longer contains any hardcoded site coordinates — all
+# per-site delineation settings live in data/site_config.csv.
+list.files("src/", full.names = TRUE) %>%
+  walk(~source(.))
+```
+
+---
+
+## One-time setup
+
+Run `src/bootstrap_site_config.R` once (interactively or via Rscript) to create
+`data/site_config.csv`. After that, edit the CSV directly to adjust settings for
+specific sites. The bootstrap script only needs to be re-run if the site list
+changes substantially enough to warrant reassigning location IDs from scratch —
+for incremental additions, use `add_new_locations()` below.
+
+---
+
+## Load site config
+
+`site_config.csv` is the single source of truth for per-location delineation
+settings. It controls snap method, buffer radius, COMID corrections, and more.
+Open it in Excel or any spreadsheet app to inspect or edit.
+
+```{r load_config}
+site_config <- read_csv("data/site_config.csv")
+
+cat("Site config loaded:", nrow(site_config), "unique CONUS locations\n")
+cat("  On-network (snap=TRUE): ",  sum( site_config$snap), "\n")
+cat("  Off-network (snap=FALSE):", sum(!site_config$snap), "\n")
+cat("  COMID overrides:         ", sum(!is.na(site_config$comid_override)), "\n")
+cat("  Flagged international:   ", sum(site_config$is_international), "\n")
+```
+
+---
+
+## Review GROW
+
+Compare the current site list against the previous published GROWdb version.
+
+```{r load_sites}
+# NOTE: the Marshall Gulch coordinate correction is a known data quality issue
+# in the source CSV. The corrected coordinates are preserved here until the
+# source file is fixed upstream.
+conus_sites_update <- read_csv("data/date_lat_long_grow_KKA_05.05.26.csv", show_col_types = FALSE) %>%
+  mutate(
+    Longitude = if_else(sample_name == "marshallgulch_2019_sw_WHONDRS-S19S_0035", -110.75784, Longitude),
+    Latitude  = if_else(sample_name == "marshallgulch_2019_sw_WHONDRS-S19S_0035",   32.42735, Latitude)
+  ) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269, remove = FALSE) %>%
+  .[tigris::states() %>% filter(!STUSPS %in% c("HI", "PR", "AK")) %>% st_buffer(10000), ]
+```
+
+```{r find_new_dropped}
+sites_previous <- read_csv("data/archive/GROWdb_with_vars_20230519.csv", show_col_types = FALSE) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269, remove = FALSE) %>%
+  .[tigris::states() %>% filter(!STUSPS %in% c("HI", "PR", "AK")) %>% st_buffer(10000), ] %>%
+  st_drop_geometry()
+
+# Sites that are NEW in the latest update
+new_update <- conus_sites_update %>%
+  anti_join(sites_previous, by = c("sample_name" = "SampleName"))
+
+# Sites whose coordinates changed between new and previous version
+new_previous_coords_dif <- conus_sites_update %>%
+  filter(sample_name %in% sites_previous$SampleName) %>%
+  anti_join(sites_previous, by = c("Latitude", "Longitude"))
+
+old_points <- read_csv("data/archive/GROWdb_with_vars_20230519.csv", show_col_types = FALSE) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269, remove = FALSE) %>%
+  filter(SampleName %in% new_previous_coords_dif$sample_name) %>%
+  select(SampleName, Longitude, Latitude)
+
+# new_previous_coords_dif_reviewed <- review_point_pairs(new_points = new_previous_coords_dif,
+#                                                        old_points = old_points)
+# ... Marshall Gulch changed substantially; previous coordinates are more appropriate. Updated.
+
+# Sites that were DROPPED from the previous GROW version
+missing_previous <- sites_previous %>%
+  anti_join(conus_sites_update, by = c("SampleName" = "sample_name"))
+```
+
+---
+
+## Delineate all GROW site watersheds
+
+```{r check_new_locations}
+# Check whether any sites in the current update are missing from site_config.csv.
+# New sites need a config row (with location_id and delineation settings) before
+# delineation can run. If any appear here, call add_new_locations() below.
+missing_from_config <- conus_sites_update %>%
+  st_drop_geometry() %>%
+  distinct(Latitude, Longitude) %>%
+  anti_join(site_config, by = c("Latitude", "Longitude")) %>%
+  # Exclude sites that are simply outside the CONUS scope
+  filter(!is.na(Latitude))
+
+if (nrow(missing_from_config) > 0) {
+  cat("WARNING:", nrow(missing_from_config),
+      "site location(s) are not in site_config.csv:\n")
+  print(missing_from_config)
+  cat("\nRun add_new_locations(missing_from_config) to register them with",
+      "default settings,\nthen review site_config.csv before delineating.\n")
+} else {
+  cat("All site locations are registered in site_config.csv.\n")
+}
+```
+
+```{r add_new_locations, eval=FALSE}
+# Run this chunk if missing_from_config above is non-empty.
+# It appends the new locations to site_config.csv with default settings.
+# Open the CSV afterward and adjust any parameters for unusual sites.
+site_config <- add_new_locations(missing_from_config)
+```
+
+```{r prep_delineation}
+# International sites pass the CONUS boundary filter but are on international
+# waters. They are excluded here and handled by international_workflow.Rmd.
+# The is_international flag in site_config.csv controls this — no sample names
+# are hardcoded in this script.
+international_locs <- site_config %>%
+  filter(is_international) %>%
+  select(Latitude, Longitude)
+
+# Collapse to unique locations for delineation (multiple samples at the same
+# coordinates only need one watershed polygon). Join config columns so each
+# row carries its own delineation settings into getXYWatersheds().
+new_dupes_removed <- conus_sites_update %>%
+  distinct(Longitude, Latitude, .keep_all = TRUE) %>%
+  anti_join(international_locs, by = c("Latitude", "Longitude")) %>%
+  left_join(site_config, by = c("Latitude", "Longitude")) %>%
+  st_as_sf()
+
+cat("Unique CONUS locations to delineate:", nrow(new_dupes_removed), "\n")
+```
+
+```{r delineate, eval=FALSE}
+# Delineate each unique location. getXYWatersheds() reads its per-site settings
+# (snap, buffer, COMID override, etc.) from the site_config columns on each row.
+new_dupes_removed %>%
+  split(seq_len(nrow(.))) %>%
+  walk(function(site_row) {
+    cfg <- site_row %>%
+      st_drop_geometry() %>%
+      select(any_of(names(site_config)))
+    try(getXYWatersheds(sf        = site_row,
+                        site_config = cfg,
+                        file_path   = "data/grow_watersheds_all/"))
+  })
+```
+
+Load all delineated watersheds:
+
+```{r load_watersheds}
+watersheds <- list.files("data/grow_watersheds_all/", full.names = TRUE) %>%
+  map_dfr(~readRDS(.x))
+```
+
+Retry any sites that errored out. A failed site produces no output file, so it
+will not have a `location_id` in the loaded watersheds:
+
+```{r retry_failed, eval=FALSE}
+new_dupes_removed %>%
+  filter(!location_id %in% watersheds$location_id) %>%
+  split(seq_len(nrow(.))) %>%
+  walk(function(site_row) {
+    cfg <- site_row %>%
+      st_drop_geometry() %>%
+      select(any_of(names(site_config)))
+    try(getXYWatersheds(sf          = site_row,
+                        site_config = cfg,
+                        file_path   = "data/grow_watersheds_all/"))
+  })
+
+watersheds <- list.files("data/grow_watersheds_all/", full.names = TRUE) %>%
+  map_dfr(~readRDS(.x))
+
+# Any that still failed?
+still_broken <- new_dupes_removed %>%
+  filter(!location_id %in% watersheds$location_id)
+print(still_broken)
+```
+
+Review the delineated watersheds — flag any that look wrong:
+
+```{r review, eval=FALSE}
+flowlines <- get_nhdplus(comid = watersheds %>% filter(!is.na(comid)) %>% pull(comid))
+
+# # Load per-COMID flowlines individually (batching sometimes drops results)
+# comids <- watersheds %>% filter(!is.na(comid)) %>% pull(comid) %>% unique()
+# flowlines <- vector("list", length(comids))
+# for (i in seq_along(comids)) {
+#   flowlines[[i]] <- get_nhdplus(comid = comids[i]) %>% select(comid)
+# }
+# flowlines <- bind_rows(flowlines)
+
+review <- review_watersheds(watersheds = watersheds, flowlines = flowlines,
+                            sites = new_dupes_removed)
+saveRDS(review, "data/review_all.RDS")
+```
+
+```{r inspect_review, eval=FALSE}
+review <- readRDS("data/review_all.RDS")
+
+good  <- review %>% filter(review == "Y")
+small <- review %>% filter(review == "S")  # catchment too small for NHD
+weird <- review %>% filter(review == "B")  # some other delineation problem
+```
+
+# This step is where you would develop the course of action for the problematic watersheds.
+
+## Bind all watersheds
+
+```{r bind_watersheds}
+conus_watersheds <- conus_sites_update %>%
+  st_drop_geometry() %>%
+  inner_join(
+    list.files("data/grow_watersheds_all/", full.names = TRUE) %>% map_dfr(~readRDS(.x)),
+    by = c("Latitude", "Longitude")
+  ) %>%
+  mutate(update = if_else(sample_name %in% new_update$sample_name, "new", "previous"))
+
+saveRDS(conus_watersheds, "data/conus_watersheds.RDS")
+
+# Any sites in the full site list that are not in the CONUS watershed set?
+# These are the international sites handled by international_workflow.Rmd.
+outside_conus <- read_csv("data/date_lat_long_grow_KKA_05.05.26.csv", show_col_types = FALSE) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269, remove = FALSE) %>%
+  filter(!sample_name %in% conus_watersheds$sample_name)
+
+mapview(outside_conus)  # sanity check: should only show non-CONUS sites
+```
+
+---
+
+## Add back sites dropped from previous version
+
+```{r prep_missing}
+# International locations filter (same logic as above — driven by site_config)
+missing_dupes_removed <- missing_previous %>%
+  distinct(Longitude, Latitude, .keep_all = TRUE) %>%
+  anti_join(international_locs, by = c("Latitude", "Longitude")) %>%
+  left_join(site_config, by = c("Latitude", "Longitude")) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269, remove = FALSE) %>%
+  .[tigris::states() %>% filter(!STUSPS %in% c("HI", "PR", "AK")) %>% st_buffer(10000), ]
+```
+
+```{r delineate_missing}
+missing_dupes_removed %>%
+  split(seq_len(nrow(.))) %>%
+  walk(function(site_row) {
+    cfg <- site_row %>%
+      st_drop_geometry() %>%
+      select(any_of(names(site_config)))
+    try(getXYWatersheds(sf          = site_row,
+                        site_config = cfg,
+                        file_path   = "data/grow_watersheds_missing/"))
+  })
+
+watersheds_missing <- list.files("data/grow_watersheds_missing/", full.names = TRUE) %>%
+  map_dfr(~readRDS(.x))
+
+flowlines <- get_nhdplus(comid = watersheds_missing %>% filter(!is.na(comid)) %>% pull(comid))
+
+review <- review_watersheds(watersheds = watersheds_missing, flowlines = flowlines,
+                            sites = missing_dupes_removed)
+saveRDS(review, "data/review_missing.RDS")
+```
+
+```{r bind_complete}
+conus_watersheds <- list.files("data/grow_watersheds_all/", full.names = TRUE) %>%
+  map_dfr(~readRDS(.x)) %>%
+  inner_join(conus_sites_update %>% st_drop_geometry(), by = c("Latitude", "Longitude")) %>%
+  mutate(update = if_else(sample_name %in% new_update$sample_name, "new", "previous")) %>%
+  st_make_valid()
+
+conus_missing_watersheds <- list.files("data/grow_watersheds_missing/", full.names = TRUE) %>%
+  map_dfr(~readRDS(.x)) %>%
+  inner_join(missing_previous %>% st_drop_geometry(), by = c("Latitude", "Longitude")) %>%
+  mutate(update = "missing") %>%
+  select(sample_name = SampleName, Collection_Date = Date,
+         comid = comid.y, location_id, Latitude, Longitude, watershed, update) %>%
+  st_make_valid()
+
+conus_complete <- conus_watersheds %>%
+  bind_rows(conus_missing_watersheds) %>%
+  distinct() %>%
+  st_make_valid()
+
+saveRDS(conus_complete, "data/conus_watersheds.RDS")
+```
+
+---
+
+## One-time file migration (run once after creating site_config.csv)
+
+Existing watershed RDS files in `grow_watersheds_all/` were named by the old
+session-based `rowid` (e.g., `42.RDS`). The new naming uses stable `location_id`
+values from site_config (e.g., `CONUS_0042.RDS`). Run this chunk once to rename
+them, then never again.
+
+```{r migrate_file_names, eval=FALSE}
+existing_files <- list.files("data/grow_watersheds_all/", full.names = TRUE,
+                              pattern = "^[0-9]+\\.RDS$")
+
+renamed <- 0L
+skipped <- 0L
+
+for (f in existing_files) {
+  ws <- readRDS(f)
+
+  match_row <- site_config %>%
+    filter(abs(Latitude - ws$Latitude[1]) < 1e-4 &
+           abs(Longitude - ws$Longitude[1]) < 1e-4)
+
+  if (nrow(match_row) != 1) {
+    message("No unique config match for ", basename(f), " — skipped")
+    skipped <- skipped + 1L
+    next
+  }
+
+  new_path <- file.path("data/grow_watersheds_all/",
+                        paste0(match_row$location_id, ".RDS"))
+
+  if (!file.exists(new_path)) {
+    # Add location_id to the stored object before renaming
+    ws$location_id <- match_row$location_id
+    saveRDS(ws, new_path)
+    file.remove(f)
+    renamed <- renamed + 1L
+  } else {
+    skipped <- skipped + 1L
+  }
+}
+
+cat(sprintf("Renamed: %d  Skipped: %d\n", renamed, skipped))
+```
