@@ -15,6 +15,7 @@ library(mapview)
 library(nngeo)
 library(nhdplusTools)
 library(sf)
+  library(leaflet)
 
 list.files("src/", full.names = TRUE) %>%
   walk(~source(.))
@@ -23,7 +24,6 @@ list.files("src/", full.names = TRUE) %>%
 ### Review GROW
 
 Pull in all sites in updated GROW:
-
 ```{r}
 conus_sites_pre <- read_csv("data/lat_long_grow_KKA_03.25.26.csv") %>%
   mutate(Longitude = ifelse(sample_name == "marshallgulch_2019_sw_WHONDRS-S19S_0035", -110.75784, Longitude),
@@ -62,7 +62,6 @@ coords_changed
 ```
 
 Which sites are new, are any sites dropped?
-
 ```{r}
 sites_previous <- read_csv("data/archive/GROWdb_with_vars_20230519.csv") %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269, remove = FALSE) %>%
@@ -94,7 +93,6 @@ missing_previous <- sites_previous %>%
 ```
 
 # Delineate all GROW site watersheds:
-
 ```{r}
 international_sites <- conus_sites_update %>%
   filter(sample_name %in% c("columbia_2019_sw_WHONDRS-S19S_0036", "columbia_2019_sw_WHONDRS-S19S_0074",
@@ -115,7 +113,6 @@ new_dupes_removed <- conus_sites_update %>%
 ```
 
 Delineate site watersheds: 
-
 ```{r eval = FALSE}
 new_dupes_removed %>%
   split(seq_len(nrow(.))) %>%
@@ -123,7 +120,6 @@ new_dupes_removed %>%
 ```
 
 Pull in the delineated watersheds:
-
 ```{r}
 watersheds <- list.files("data/grow_watersheds_all/", full.names = TRUE) %>%
   map_dfr(~readRDS(.x)) #%>%
