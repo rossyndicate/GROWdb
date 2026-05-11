@@ -22,7 +22,7 @@ review_watersheds <- function(watersheds, sites, flowlines) {
   
   for (i in remaining) {
     watershed <- watersheds[i, ]
-    site      <- sites %>% dplyr::filter(Latitude == watershed$Latitude & Longitude == watershed$Longitude)
+    site      <- sites %>% dplyr::filter(rowid == watershed$rowid)
     flowline  <- flowlines %>% dplyr::filter(comid == watershed$comid)
     
     # -----------------------------
@@ -57,8 +57,8 @@ review_watersheds <- function(watersheds, sites, flowlines) {
     
     print(m1)
     
-    message(sprintf("[Map 1/2] location: %s | comid: %s",
-                    watershed$location_id, watershed$comid))
+    message(sprintf("[Map 1/2] sample: %s | comid: %s",
+                    watershed$rowid, watershed$comid))
     
     continue_key <- "INVALID"
     while (!continue_key %in% c("", "y", "s", "m", "b")) {
@@ -87,9 +87,9 @@ review_watersheds <- function(watersheds, sites, flowlines) {
     
     print(m2)
     
-    message(sprintf("[Map 2/2] [%d / %d] location: %s | comid: %s",
+    message(sprintf("[Map 2/2] [%d / %d] sample: %s | comid: %s",
                     i, nrow(watersheds),
-                    watershed$location_id, watershed$comid))
+                    watershed$rowid, watershed$comid))
     
     response <- ""
     while (!response %in% c("y", "s", "b", "q")) {

@@ -6,11 +6,6 @@ review_gage_pairs <- function(points,
                               gage_site_col = "gage",
                               buffer_m = 2500) {
   
-  library(dplyr)
-  library(sf)
-  library(mapview)
-  library(leaflet)
-  
   stopifnot(all(c(lat_col, lon_col, point_site_col) %in% names(points)))
   stopifnot(gage_site_col %in% names(gages))
   
