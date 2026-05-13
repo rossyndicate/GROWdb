@@ -8,14 +8,12 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = T, warning = F, comment = F, message = F)
 
-library(data.table)
 library(sf)
 library(tidyverse)
 library(terra)
 library(nhdplusTools)
 library(mapview)
 library(dataRetrieval)
-library(lubridate)
 library(StreamCatTools)
 library(nngeo)
 library(units) 
