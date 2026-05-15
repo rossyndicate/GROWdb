@@ -1,0 +1,313 @@
+Column Name,Description,Source
+Al2O3Ws,Mean % of lithological aluminum oxide (Al2O3) content in surface or near surface geology within watershed,StreamCat
+arbolatesu,NHDPlusV2 arbolate sum attribute.,NHDPlusV2
+areasqkm,Local NHDPlusV2 catchment area in square kilometers.,NHDPlusV2
+AreaSqKmBl2016Ws,Watershed area in square kilometers classified as barren land land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmConif2016Ws,Watershed area in square kilometers classified as evergreen/coniferous forest land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmCrop2016Ws,Watershed area in square kilometers classified as cultivated crops land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmDecid2016Ws,Watershed area in square kilometers classified as deciduous forest land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmGrs2016Ws,Watershed area in square kilometers classified as grassland/herbaceous land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmHay2016Ws,Watershed area in square kilometers classified as pasture/hay land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmHbWet2016Ws,Watershed area in square kilometers classified as herbaceous wetlands land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmIce2016Ws,Watershed area in square kilometers classified as perennial ice/snow land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmImp2016Ws,Watershed area in square kilometers classified as impervious surface land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmMxFst2016Ws,Watershed area in square kilometers classified as mixed forest land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmOw2016Ws,Watershed area in square kilometers classified as open water land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmShrb2016Ws,Watershed area in square kilometers classified as shrub/scrub land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmUrbHi2016Ws,"Watershed area in square kilometers classified as developed, high intensity land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.",Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmUrbLo2016Ws,"Watershed area in square kilometers classified as developed, low intensity land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.",Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmUrbMd2016Ws,"Watershed area in square kilometers classified as developed, medium intensity land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.",Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmUrbOp2016Ws,"Watershed area in square kilometers classified as developed, open space land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.",Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmWdWet2016Ws,Watershed area in square kilometers classified as woody wetlands land cover in NLCD 2016. Derived from AreaSqKmWs and the associated percent watershed land-cover variable.,Derived from GROWdb watershed area and NLCD 2016 percent watershed fields
+AreaSqKmWs,Total watershed area in square kilometers used for derived watershed land-cover area calculations.,GROWdb derived watershed fields
+AriditySite,Aridity index at the sample/site location.,GROWdb site/watershed derived attributes
+AridityWs,Watershed-scale aridity index.,GROWdb site/watershed derived attributes
+CaOWs,Mean % of lithological calcium oxide (CaO) content in surface or near surface geology within watershed,StreamCat
+CatAreaSqKm,Area of local NHDPlusV2 catchment (square km),StreamCat
+CFS,Streamflow value in cubic feet per second for the linked stream gage/source.,GROWdb flow/gage linkage fields
+ClayWs,Mean % clay content of soils (STATSGO) within watershed,StreamCat
+comid,NHDPlusV2 COMID linked to the sample/site.,NHDPlusV2
+conus,Indicates whether a site is located within CONUS (TRUE) or outside CONUS (FALSE).,GROWdb metadata
+DamDensWs,Density of georeferenced dams within watershed (dams/ square km) based on the National Inventory of Dams (https://catalog.data.gov/dataset/national-inventory-of-dams),StreamCat
+DamNIDStorWs,Total possible volume of all reservoirs (NID_STORA in NID) per unit area of watershed (cubic meters/square km) based on the National Inventory of Dams (https://catalog.data.gov/dataset/national-inventory-of-dams),StreamCat
+DamNrmStorWs,Normal (most common) volume of all reservoirs (NORM_STORA in NID) per unit area of watershed (cubic meters/square km) based on the National Inventory of Dams (https://catalog.data.gov/dataset/national-inventory-of-dams),StreamCat
+Date,Sample collection date.,GROWdb metadata
+delineation_type,"Indicates how each watershed was delineated. All watersheds were generated using the NHDPlusV2Tools package, but different functions were used depending on nuances of the sampling site. This is probably a bit in the weeds, but it will be useful for anyone who plans to rerun or adapt the workflow in the future.",GROWdb metadata
+divdasqkm,Divergence-adjusted drainage area in square kilometers from NHDPlusV2.,NHDPlusV2
+divergence,NHDPlusV2 divergence code.,NHDPlusV2
+dndraincou,Downstream drainage count attribute.,NHDPlusV2
+dnhydroseq,Downstream NHDPlusV2 hydrologic sequence number.,NHDPlusV2
+dnlevel,Downstream NHDPlusV2 stream level.,NHDPlusV2
+dnlevelpat,Downstream NHDPlusV2 level path identifier.,NHDPlusV2
+dnminorhyd,Downstream minor hydrologic sequence number.,NHDPlusV2
+elevfixed,NHDPlusV2 elevation-fixed flag or attribute.,NHDPlusV2
+enabled,NHDPlusV2 enabled flag.,NHDPlusV2
+fcode,NHDPlusV2 feature code.,NHDPlusV2
+fdate,NHDPlusV2 feature date field.,NHDPlusV2
+Fe2O3Ws,Mean % of lithological ferric oxide (Fe2O3) content in surface or near surface geology within watershed,StreamCat
+flow_record,Indicates the availability or type of flow record associated with the linked stream gage/source.,GROWdb flow/gage linkage fields
+flowdir,Flow direction flag for the linked NHDPlusV2 feature.,NHDPlusV2
+flowlink,Identifier or link used to connect the sample/site to a flow record or gage.,GROWdb flow/gage linkage fields
+frommeas,From-measure along the linked NHDPlusV2 reach.,NHDPlusV2
+fromnode,Upstream node identifier for the linked NHDPlusV2 flowline.,NHDPlusV2
+ftype,NHDPlusV2 feature type.,NHDPlusV2
+gage_id,Identifier for the stream gage linked to the sample/site.,GROWdb flow/gage linkage fields
+gage_seasonal,"Identifies stream gages that stop measuring flow during winter months, which could bias the flow statistics. ""Yes"" indicates likely seasonal operation, while ""No"" indicates unlikely seasonal operation.",GROWdb metadata
+gnis_id,"GNIS identifier for the linked NHDPlusV2 feature, where available.",NHDPlusV2
+gnis_name,"GNIS name for the linked NHDPlusV2 feature, where available.",NHDPlusV2
+huc10,10-digit hydrologic unit code.,NHDPlusV2
+huc12,12-digit hydrologic unit code.,NHDPlusV2
+huc2,2-digit hydrologic unit code.,NHDPlusV2
+huc4,4-digit hydrologic unit code.,NHDPlusV2
+huc6,6-digit hydrologic unit code.,NHDPlusV2
+huc8,8-digit hydrologic unit code.,NHDPlusV2
+HUDen2010Ws,Mean housing unit density (housing units/square km) within watershed,StreamCat
+hwnodesqkm,Headwater node drainage area in square kilometers.,NHDPlusV2
+hwtype,NHDPlusV2 headwater type attribute.,NHDPlusV2
+hydroseq,NHDPlusV2 hydrologic sequence number.,NHDPlusV2
+id,NHDPlusV2 feature identifier from the linked flowline data.,NHDPlusV2
+K2OWs,Mean % of lithological potassium oxide (K2O) content in surface or near surface geology within watershed,StreamCat
+lakefract,Fraction of the linked NHDPlusV2 drainage area or catchment represented by lake area.,NHDPlusV2
+Latitude,Sample latitude in decimal degrees.,GROWdb metadata
+lengthkm,Length of the linked NHDPlusV2 flowline in kilometers.,NHDPlusV2
+levelpathi,NHDPlusV2 level path identifier.,NHDPlusV2
+Longitude,Sample longitude in decimal degrees.,GROWdb metadata
+MAST_2008,Predicted mean annual stream temperature (Jan-Dec) for year 2008,StreamCat
+MAST_2009,Predicted mean annual stream temperature (Jan-Dec) for year 2009,StreamCat
+MAST_2013,Predicted mean annual stream temperature (Jan-Dec) for year 2013,StreamCat
+MAST_2014,Predicted mean annual stream temperature (Jan-Dec) for year 2014,StreamCat
+maxelevraw,Maximum raw elevation associated with the linked NHDPlusV2 catchment/flowline.,NHDPlusV2
+maxelevsmo,Maximum smoothed elevation associated with the linked NHDPlusV2 catchment/flowline.,NHDPlusV2
+MgOWs,Mean % of lithological magnesium oxide (MgO) content in surface or near surface geology within watershed,StreamCat
+MineDensWs,Density of mine sites within watershed (mines/square km),StreamCat
+minelevraw,Minimum raw elevation associated with the linked NHDPlusV2 catchment/flowline.,NHDPlusV2
+minelevsmo,Minimum smoothed elevation associated with the linked NHDPlusV2 catchment/flowline.,NHDPlusV2
+MSST_2008,Predicted mean summer stream temperature (July-Aug) for year 2008,StreamCat
+MSST_2009,Predicted mean summer stream temperature (July-Aug) for year 2009,StreamCat
+MSST_2013,Predicted mean summer stream temperature (July-Aug) for year 2013,StreamCat
+MSST_2014,Predicted mean summer stream temperature (July-Aug) for year 2014,StreamCat
+MWST_2008,Predicted mean winter stream temperature (Jan-Feb) for year 2008,StreamCat
+MWST_2009,Predicted mean winter stream temperature (Jan-Feb) for year 2009,StreamCat
+MWST_2013,Predicted mean winter stream temperature (Jan-Feb) for year 2013,StreamCat
+MWST_2014,Predicted mean winter stream temperature (Jan-Feb) for year 2014,StreamCat
+Na2OWs,Mean % of lithological sodium oxide (Na2O) content in surface or near surface geology within watershed,StreamCat
+NPPSite,Net primary productivity at the sample/site location.,GROWdb site/watershed derived attributes
+NPPWs,Watershed-scale net primary productivity.,GROWdb site/watershed derived attributes
+NWs,Mean % of lithological nitrogen (N) content in surface or near surface geology within watershed,StreamCat
+OmernikIIISite,Omernik Level III ecoregion at the sample/site location.,GROWdb site/watershed derived attributes
+OmernikIIIWs,Dominant or linked Omernik Level III ecoregion for the watershed.,GROWdb site/watershed derived attributes
+OmernikIISite,Omernik Level II ecoregion at the sample/site location.,GROWdb site/watershed derived attributes
+OmernikIIWs,Dominant or linked Omernik Level II ecoregion for the watershed.,GROWdb site/watershed derived attributes
+OmernikISite,Omernik Level I ecoregion at the sample/site location.,GROWdb site/watershed derived attributes
+OmernikIWs,Dominant or linked Omernik Level I ecoregion for the watershed.,GROWdb site/watershed derived attributes
+OmWs,Mean organic matter content (% by weight) of soils (STATSGO) within watershed,StreamCat
+P2O5Ws,Mean % of lithological phosphorous oxide (P2O5) content in surface or near surface geology within watershed,StreamCat
+pathlength,NHDPlusV2 path length attribute.,NHDPlusV2
+pathtimema,NHDPlusV2 path time mean annual attribute.,NHDPlusV2
+PctAlkIntruVolWs,% of watershed area classified as lithology type: alkaline intrusive volcanic rock,StreamCat
+PctAlluvCoastWs,% of watershed area classified as lithology type: alluvium and fine-textured coastal zone sediment,StreamCat
+PctBl2016Ws,% of watershed area classified as barren land cover (NLCD 2016 class 31),StreamCat
+PctCarbResidWs,% of watershed area classified as lithology type: carbonate residual material,StreamCat
+PctCoastCrsWs,"% of watershed area classified as lithology type: coastal zone sediment, coarse-textured",StreamCat
+PctColluvSedWs,% of watershed area classified as lithology type: colluvial sediment,StreamCat
+PctConif2016Ws,% of watershed area classified as evergreen forest land cover (NLCD 2016 class 42),StreamCat
+PctCrop2016Ws,% of watershed area classified as crop land use (NLCD 2016 class 82),StreamCat
+PctDecid2016Ws,% of watershed area classified as deciduous forest land cover (NLCD 2016 class 41),StreamCat
+PctEolCrsWs,"% of watershed area classified as lithology type: eolian sediment, coarse-textured (sand dunes)",StreamCat
+PctEolFineWs,"% of watershed area classified as lithology type: eolian sediment, fine-textured (glacial loess)",StreamCat
+PctExtruVolWs,% of watershed area classified as lithology type: extrusive volcanic rock,StreamCat
+PctFire2000Ws,% Forest loss to fire (fire perimeter) for 2000 within watershed,StreamCat
+PctFire2001Ws,% Forest loss to fire (fire perimeter) for 2001 within watershed,StreamCat
+PctFire2002Ws,% Forest loss to fire (fire perimeter) for 2002 within watershed,StreamCat
+PctFire2003Ws,% Forest loss to fire (fire perimeter) for 2003 within watershed,StreamCat
+PctFire2004Ws,% Forest loss to fire (fire perimeter) for 2004 within watershed,StreamCat
+PctFire2005Ws,% Forest loss to fire (fire perimeter) for 2005 within watershed,StreamCat
+PctFire2006Ws,% Forest loss to fire (fire perimeter) for 2006 within watershed,StreamCat
+PctFire2007Ws,% Forest loss to fire (fire perimeter) for 2007 within watershed,StreamCat
+PctFire2008Ws,% Forest loss to fire (fire perimeter) for 2008 within watershed,StreamCat
+PctFire2009Ws,% Forest loss to fire (fire perimeter) for 2009 within watershed,StreamCat
+PctFire2010Ws,% Forest loss to fire (fire perimeter) for 2010 within watershed,StreamCat
+PctFrstLoss2001Ws,% Forest cover loss (Tree canopy cover change) for 2001 within watershed,StreamCat
+PctFrstLoss2002Ws,% Forest cover loss (Tree canopy cover change) for 2002 within watershed,StreamCat
+PctFrstLoss2003Ws,% Forest cover loss (Tree canopy cover change) for 2003 within watershed,StreamCat
+PctFrstLoss2004Ws,% Forest cover loss (Tree canopy cover change) for 2004 within watershed,StreamCat
+PctFrstLoss2005Ws,% Forest cover loss (Tree canopy cover change) for 2005 within watershed,StreamCat
+PctFrstLoss2006Ws,% Forest cover loss (Tree canopy cover change) for 2006 within watershed,StreamCat
+PctFrstLoss2007Ws,% Forest cover loss (Tree canopy cover change) for 2007 within watershed,StreamCat
+PctFrstLoss2008Ws,% Forest cover loss (Tree canopy cover change) for 2008 within watershed,StreamCat
+PctFrstLoss2009Ws,% Forest cover loss (Tree canopy cover change) for 2009 within watershed,StreamCat
+PctFrstLoss2010Ws,% Forest cover loss (Tree canopy cover change) for 2010 within watershed,StreamCat
+PctFrstLoss2011Ws,% Forest cover loss (Tree canopy cover change) for 2011 within watershed,StreamCat
+PctFrstLoss2012Ws,% Forest cover loss (Tree canopy cover change) for 2012 within watershed,StreamCat
+PctFrstLoss2013Ws,% Forest cover loss (Tree canopy cover change) for 2013 within watershed,StreamCat
+PctGlacLakeCrsWs,"% of watershed area classified as lithology type: glacial outwash and glacial lake sediment, coarse-textured",StreamCat
+PctGlacLakeFineWs,"% of watershed area classified as lithology type: glacial lake sediment, fine-textured",StreamCat
+PctGlacTilClayWs,"% of watershed area classified as lithology type: glacial till, clayey",StreamCat
+PctGlacTilCrsWs,"% of watershed area classified as lithology type: glacial till, coarse-textured",StreamCat
+PctGlacTilLoamWs,"% of watershed area classified as lithology type: glacial till, loamy",StreamCat
+PctGrs2016Ws,% of watershed area classified as grassland/herbaceous land cover (NLCD 2016 class 71),StreamCat
+PctHay2016Ws,% of watershed area classified as hay land use (NLCD 2016 class 81),StreamCat
+PctHbWet2016Ws,% of watershed area classified as herbaceous wetland land cover (NLCD 2016 class 95),StreamCat
+PctHydricWs,"% of watershed area classified as lithology type: hydric, peat and muck",StreamCat
+PctIce2016Ws,% of watershed area classified as ice/snow land cover (NLCD 2016 class 12),StreamCat
+PctImp2001Ws,Mean imperviousness of anthropogenic surfaces (NLCD 2001) within watershed,StreamCat
+PctImp2004Ws,% of watershed area classified as impervious surface from NLCD 2004.,StreamCat
+PctImp2006Ws,Mean imperviousness of anthropogenic surfaces (NLCD 2006) within watershed,StreamCat
+PctImp2008Ws,% of watershed area classified as impervious surface from NLCD 2008.,StreamCat
+PctImp2011Ws,Mean imperviousness of anthropogenic surfaces (NLCD 2011) within watershed,StreamCat
+PctImp2013Ws,% of watershed area classified as impervious surface from NLCD 2013.,StreamCat
+PctImp2016Ws,% of watershed area classified as impervious surface from NLCD 2016.,StreamCat
+PctImp2019Ws,% of watershed area classified as impervious surface from NLCD 2019.,StreamCat
+PctMxFst2016Ws,% of watershed area classified as mixed deciduous/evergreen forest land cover (NLCD 2016 class 43),StreamCat
+PctNonCarbResidWs,% of watershed area classified as lithology type: non-carbonate residual material,StreamCat
+PctOw2016Ws,% of watershed area classified as open water land cover (NLCD 2016 class 11),StreamCat
+PctSalLakeWs,% of watershed area classified as lithology type: saline like sediment,StreamCat
+PctShrb2016Ws,% of watershed area classified as shrub/scrub land cover (NLCD 2016 class 52),StreamCat
+PctSilicicWs,% of watershed area classified as lithology type: silicic residual material,StreamCat
+PctUrbHi2016Ws,"% of watershed area classified as developed, high-intensity land use (NLCD 2016 class 24)",StreamCat
+PctUrbLo2016Ws,"% of watershed area classified as developed, low-intensity land use (NLCD 2016 class 22)",StreamCat
+PctUrbMd2016Ws,"% of watershed area classified as developed, medium-intensity land use (NLCD 2016 class 23)",StreamCat
+PctUrbOp2016Ws,"% of watershed area classified as developed, open space land use (NLCD 2016 class 21)",StreamCat
+PctWaterWs,% of watershed area classified as lithology type: water,StreamCat
+PctWdWet2016Ws,% of watershed area classified as woody wetland land cover (NLCD 2016 class 90),StreamCat
+percentile_20,20th percentile streamflow statistic for the linked stream gage/source.,GROWdb flow/gage linkage fields
+percentile_80,80th percentile streamflow statistic for the linked stream gage/source.,GROWdb flow/gage linkage fields
+PermWs,Mean permeability (cm/hour) of soils (STATSGO) within watershed,StreamCat
+PopDen2010Ws,Mean population density (people/square km) within watershed,StreamCat
+Precip_Minus_EVTWs,Watershed-scale precipitation minus evapotranspiration.,StreamCat
+Precip08Ws,PRISM climate data - Mean precipitation (mm) within the watershed. Period: 2008,StreamCat
+Precip09Ws,PRISM climate data - Mean precipitation (mm) within the watershed. Period: 2009,StreamCat
+precip2008ws,Watershed-scale precipitation for 2008.,StreamCat
+precip2009ws,Watershed-scale precipitation for 2009.,StreamCat
+PrecipSite,Precipitation at the sample/site location.,GROWdb site/watershed derived attributes
+PrecipWs,Watershed-scale precipitation.,StreamCat
+qa_01,NHDPlusV2 QA flow/velocity estimate field for month 01; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_02,NHDPlusV2 QA flow/velocity estimate field for month 02; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_03,NHDPlusV2 QA flow/velocity estimate field for month 03; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_04,NHDPlusV2 QA flow/velocity estimate field for month 04; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_05,NHDPlusV2 QA flow/velocity estimate field for month 05; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_06,NHDPlusV2 QA flow/velocity estimate field for month 06; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_07,NHDPlusV2 QA flow/velocity estimate field for month 07; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_08,NHDPlusV2 QA flow/velocity estimate field for month 08; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_09,NHDPlusV2 QA flow/velocity estimate field for month 09; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_10,NHDPlusV2 QA flow/velocity estimate field for month 10; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_11,NHDPlusV2 QA flow/velocity estimate field for month 11; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_12,NHDPlusV2 QA flow/velocity estimate field for month 12; original NHDPlusV2 field name retained.,NHDPlusV2
+qa_ma,NHDPlusV2 QA flow/velocity estimate field for mean annual; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_01,NHDPlusV2 QC flow/velocity estimate field for month 01; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_02,NHDPlusV2 QC flow/velocity estimate field for month 02; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_03,NHDPlusV2 QC flow/velocity estimate field for month 03; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_04,NHDPlusV2 QC flow/velocity estimate field for month 04; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_05,NHDPlusV2 QC flow/velocity estimate field for month 05; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_06,NHDPlusV2 QC flow/velocity estimate field for month 06; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_07,NHDPlusV2 QC flow/velocity estimate field for month 07; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_08,NHDPlusV2 QC flow/velocity estimate field for month 08; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_09,NHDPlusV2 QC flow/velocity estimate field for month 09; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_10,NHDPlusV2 QC flow/velocity estimate field for month 10; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_11,NHDPlusV2 QC flow/velocity estimate field for month 11; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_12,NHDPlusV2 QC flow/velocity estimate field for month 12; original NHDPlusV2 field name retained.,NHDPlusV2
+qc_ma,NHDPlusV2 QC flow/velocity estimate field for mean annual; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_01,NHDPlusV2 QE flow/velocity estimate field for month 01; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_02,NHDPlusV2 QE flow/velocity estimate field for month 02; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_03,NHDPlusV2 QE flow/velocity estimate field for month 03; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_04,NHDPlusV2 QE flow/velocity estimate field for month 04; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_05,NHDPlusV2 QE flow/velocity estimate field for month 05; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_06,NHDPlusV2 QE flow/velocity estimate field for month 06; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_07,NHDPlusV2 QE flow/velocity estimate field for month 07; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_08,NHDPlusV2 QE flow/velocity estimate field for month 08; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_09,NHDPlusV2 QE flow/velocity estimate field for month 09; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_10,NHDPlusV2 QE flow/velocity estimate field for month 10; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_11,NHDPlusV2 QE flow/velocity estimate field for month 11; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_12,NHDPlusV2 QE flow/velocity estimate field for month 12; original NHDPlusV2 field name retained.,NHDPlusV2
+qe_ma,NHDPlusV2 QE flow/velocity estimate field for mean annual; original NHDPlusV2 field name retained.,NHDPlusV2
+rareahload,"Reservoir/lake area hydraulic-load attribute from NHDPlusV2, where available.",NHDPlusV2
+RckDepWs,Mean depth (cm) to bedrock of soils (STATSGO) within watershed,StreamCat
+RdDensWs,Density of roads (2010 Census Tiger Lines) within watershed (km/square km),StreamCat
+reachcode,NHDPlusV2 reach code for the linked flowline.,NHDPlusV2
+resolution,NHDPlusV2 feature resolution field.,NHDPlusV2
+rpuid,NHDPlusV2 region processing unit identifier.,NHDPlusV2
+rtndiv,NHDPlusV2 return divergence attribute.,NHDPlusV2
+RunoffWs,Mean runoff (mm) within watershed,StreamCat
+SampleName,Unique GROW sample/site identifier.,GROWdb metadata
+SandWs,Mean % sand content of soils (STATSGO) within watershed,StreamCat
+shape_length,Shape length of the linked NHDPlusV2 feature.,NHDPlusV2
+SiO2Ws,Mean % of lithological silicon dioxide (SiO2) content in surface or near surface geology within watershed,StreamCat
+slope,NHDPlusV2 slope attribute for the linked flowline.,NHDPlusV2
+slopelenkm,Slope length in kilometers from NHDPlusV2.,NHDPlusV2
+source,Source dataset or workflow used for the linked flow/streamflow values.,GROWdb metadata
+startflag,NHDPlusV2 start flag.,NHDPlusV2
+status,"Indicates whether a sample is new, old, or missing relative to the previous GROW version. Sites present in the older GROW but not included in the newer spreadsheets are labeled as ""missing"" so they can still be tracked if desired.",GROWdb metadata
+streamcalc,NHDPlusV2 stream calculator/order-related attribute.,NHDPlusV2
+streamleve,NHDPlusV2 stream level attribute.,NHDPlusV2
+streamorde,NHDPlusV2 stream order attribute.,NHDPlusV2
+surfarea,Surface area attribute from NHDPlusV2.,NHDPlusV2
+SWs,Mean % of lithological sulfur (S) content in surface or near surface geology within watershed,StreamCat
+terminalfl,NHDPlusV2 terminal flag.,NHDPlusV2
+terminalpa,NHDPlusV2 terminal path identifier.,NHDPlusV2
+tidal,NHDPlusV2 tidal flag.,NHDPlusV2
+TmaxSite,Maximum temperature at the sample/site location.,GROWdb site/watershed derived attributes
+TmaxWs,Watershed-scale maximum temperature.,StreamCat
+Tmean08Ws,PRISM climate data - Mean temperature (¡C) within the watershed. Period: 2008,StreamCat
+Tmean09Ws,PRISM climate data - Mean temperature (¡C) within the watershed. Period: 2009,StreamCat
+tmean2008ws,Watershed-scale mean temperature for 2008.,StreamCat
+tmean2009ws,Watershed-scale mean temperature for 2009.,StreamCat
+TmeanSite,Mean temperature at the sample/site location.,GROWdb site/watershed derived attributes
+TmeanWs,Watershed-scale mean temperature.,StreamCat
+TminSite,Minimum temperature at the sample/site location.,GROWdb site/watershed derived attributes
+TminWs,Watershed-scale minimum temperature.,StreamCat
+tomeas,To-measure along the linked NHDPlusV2 reach.,NHDPlusV2
+tonode,Downstream node identifier for the linked NHDPlusV2 flowline.,NHDPlusV2
+totdasqkm,Total drainage area in square kilometers from NHDPlusV2.,NHDPlusV2
+totma,NHDPlusV2 total mean annual flow/flow accumulation attribute.,NHDPlusV2
+uphydroseq,Upstream NHDPlusV2 hydrologic sequence number.,NHDPlusV2
+uplevelpat,Upstream NHDPlusV2 level path identifier.,NHDPlusV2
+va_01,NHDPlusV2 VA flow/velocity estimate field for month 01; original NHDPlusV2 field name retained.,NHDPlusV2
+va_02,NHDPlusV2 VA flow/velocity estimate field for month 02; original NHDPlusV2 field name retained.,NHDPlusV2
+va_03,NHDPlusV2 VA flow/velocity estimate field for month 03; original NHDPlusV2 field name retained.,NHDPlusV2
+va_04,NHDPlusV2 VA flow/velocity estimate field for month 04; original NHDPlusV2 field name retained.,NHDPlusV2
+va_05,NHDPlusV2 VA flow/velocity estimate field for month 05; original NHDPlusV2 field name retained.,NHDPlusV2
+va_06,NHDPlusV2 VA flow/velocity estimate field for month 06; original NHDPlusV2 field name retained.,NHDPlusV2
+va_07,NHDPlusV2 VA flow/velocity estimate field for month 07; original NHDPlusV2 field name retained.,NHDPlusV2
+va_08,NHDPlusV2 VA flow/velocity estimate field for month 08; original NHDPlusV2 field name retained.,NHDPlusV2
+va_09,NHDPlusV2 VA flow/velocity estimate field for month 09; original NHDPlusV2 field name retained.,NHDPlusV2
+va_10,NHDPlusV2 VA flow/velocity estimate field for month 10; original NHDPlusV2 field name retained.,NHDPlusV2
+va_11,NHDPlusV2 VA flow/velocity estimate field for month 11; original NHDPlusV2 field name retained.,NHDPlusV2
+va_12,NHDPlusV2 VA flow/velocity estimate field for month 12; original NHDPlusV2 field name retained.,NHDPlusV2
+va_ma,NHDPlusV2 VA flow/velocity estimate field for mean annual; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_01,NHDPlusV2 VC flow/velocity estimate field for month 01; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_02,NHDPlusV2 VC flow/velocity estimate field for month 02; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_03,NHDPlusV2 VC flow/velocity estimate field for month 03; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_04,NHDPlusV2 VC flow/velocity estimate field for month 04; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_05,NHDPlusV2 VC flow/velocity estimate field for month 05; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_06,NHDPlusV2 VC flow/velocity estimate field for month 06; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_07,NHDPlusV2 VC flow/velocity estimate field for month 07; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_08,NHDPlusV2 VC flow/velocity estimate field for month 08; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_09,NHDPlusV2 VC flow/velocity estimate field for month 09; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_10,NHDPlusV2 VC flow/velocity estimate field for month 10; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_11,NHDPlusV2 VC flow/velocity estimate field for month 11; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_12,NHDPlusV2 VC flow/velocity estimate field for month 12; original NHDPlusV2 field name retained.,NHDPlusV2
+vc_ma,NHDPlusV2 VC flow/velocity estimate field for mean annual; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_01,NHDPlusV2 VE flow/velocity estimate field for month 01; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_02,NHDPlusV2 VE flow/velocity estimate field for month 02; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_03,NHDPlusV2 VE flow/velocity estimate field for month 03; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_04,NHDPlusV2 VE flow/velocity estimate field for month 04; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_05,NHDPlusV2 VE flow/velocity estimate field for month 05; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_06,NHDPlusV2 VE flow/velocity estimate field for month 06; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_07,NHDPlusV2 VE flow/velocity estimate field for month 07; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_08,NHDPlusV2 VE flow/velocity estimate field for month 08; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_09,NHDPlusV2 VE flow/velocity estimate field for month 09; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_10,NHDPlusV2 VE flow/velocity estimate field for month 10; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_11,NHDPlusV2 VE flow/velocity estimate field for month 11; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_12,NHDPlusV2 VE flow/velocity estimate field for month 12; original NHDPlusV2 field name retained.,NHDPlusV2
+ve_ma,NHDPlusV2 VE flow/velocity estimate field for mean annual; original NHDPlusV2 field name retained.,NHDPlusV2
+vpuid,NHDPlusV2 vector processing unit identifier.,NHDPlusV2
+vpuin,NHDPlusV2 VPU-in attribute.,NHDPlusV2
+vpuout,NHDPlusV2 VPU-out attribute.,NHDPlusV2
+wbareacomi,"Waterbody area COMID associated with the linked NHDPlusV2 feature, where available.",NHDPlusV2
+wbareatype,NHDPlusV2 waterbody area type attribute.,NHDPlusV2
+WetIndexWs,Mean Composite Topographic Index (CTI) [Wetness Index] within watershed,StreamCat
+WsAreaSqKm,"Watershed area (square km) at NHDPlusV2 stream segment outlet, i.e., at the most downstream location of the vector line segment",StreamCat
+WtDepWs,Mean seasonal water table depth (cm) of soils (STATSGO) within watershed,StreamCat
+WWTPAllDensWs,Density of all wastewater treatment plants within the upstream watershed.,StreamCat
+WWTPMajorDensWs,Density of major wastewater treatment plants within the upstream watershed.,StreamCat
+WWTPMinorDensWs,Density of minor wastewater treatment plants within the upstream watershed.,StreamCat
