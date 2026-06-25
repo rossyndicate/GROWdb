@@ -88,10 +88,11 @@ dir.create("data/intl_watersheds", showWarnings = FALSE)
 ```
 
 ```{r delineate, eval=FALSE}
+sf_use_s2(FALSE)
 intl_unique %>%
   split(seq_len(nrow(.))) %>%
   walk(~try(
-    getXYWatersheds_intl(
+    getXYWatersheds_global(
       sf        = .x,
       basins    = basins,
       adj       = adj,
@@ -116,23 +117,25 @@ print(failed_sites)
 
 Visual QA — review watersheds against pour points:
 
-```{r review_watersheds, eval=FALSE}
-mapview(intl_watersheds, zcol = "watershed") +
-  mapview(intl_unique, col.regions = "red", cex = 3)
+```{r review_watersheds, eval = TRUE}
+hydro_rivers <- st_read("data/hydrorivers/HydroRIVERS_v10.gdb/HydroRIVERS_v10.gdb")
+
+global_watersheds <- review_watersheds_global(watersheds = intl_watersheds,
+                                            sites = intl_unique,
+                                            basins = basins,
+                                            rivers = hydro_rivers)
+
+saveRDS(intl_watersheds, "data/intl_watersheds_reviewed.RDS")
 ```
 
 Join watersheds back to all samples sharing each unique location:
 
 ```{r join_samples}
 intl_watersheds_all <- intl_sites_all %>%
-  inner_join(
-    intl_watersheds %>% st_drop_geometry(),
-    by = c("Latitude", "Longitude")
-  ) %>%
-  left_join(
-    intl_watersheds %>% select(rowid, geometry),
-    by = "rowid"
-  ) %>%
+  inner_join(intl_watersheds %>% st_drop_geometry(),
+             by = c("Latitude", "Longitude")) %>%
+  left_join(intl_watersheds %>% select(rowid, geometry),
+            by = "rowid") %>%
   st_as_sf()
 
 saveRDS(intl_watersheds_all, "data/intl_watersheds.RDS")
@@ -181,8 +184,6 @@ drainage area globally — the analogue of NHD flowline metadata.
 Same continental file structure as HydroBASINS.
 
 ```{r hydrorivers}
-
-hydro_rivers <- st_read("data/hydrorivers/HydroRIVERS_v10.gdb/HydroRIVERS_v10.gdb")
 
 # Nearest HydroRIVERS segment per unique site
 nearest_idx <- sf::st_nearest_feature(
