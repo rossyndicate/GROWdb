@@ -1,0 +1,648 @@
+---
+title: "4_global_analysis — Section 5: Geospatial extraction"
+output: html_document
+date: "2026-06-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, comment = FALSE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(sf)
+library(terra)
+library(elevatr)
+library(lwgeom)
+library(nngeo)
+library(mapview)
+library(leaflet)
+library(units)
+library(geodata)
+library(arrow)
+library(exactextractr)
+
+list.files("src", full.names = TRUE) %>%
+  walk(~source(.))
+
+sf_use_s2(FALSE)
+```
+
+# 5. Grab geospatial
+
+This section attaches all geospatial attributes to the GROWdb sites. It runs *after*
+steps 1–4, which produce:
+
+* `data/global_watersheds.RDS` and `data/conus_watersheds.RDS` (delineated watersheds),
+* the reviewed/refined watersheds in `data/intl_watersheds_refined/`,
+* the helper functions in `src/` (e.g. `select_flowline_global()`).
+
+Everything below is organized as:
+
+1. **5.1** Build the unified watershed polygons and site points used for extraction.
+2. **5.2** Selected-flowline (HydroRIVERS) attributes per site.
+3. **5.3** Local-basin (HydroBASINS) attributes per site.
+4. **5.4** Load all geospatial source layers (rasters + vectors).
+5. **5.5** Extraction helper functions.
+6. **5.6** Watershed-scale extractions (`*Ws`).
+7. **5.7** Site-scale / point extractions (`*Site`).
+8. **5.8** Assemble the final per-sample master table.
+
+```{r config}
+site_csv             <- "data/date_lat_long_grow_KKA_05.05.26.csv"
+conus_watershed_rds  <- "data/conus_watersheds.RDS"
+hydrobasins_dir      <- "data/hydrobasins"
+hydrorivers_gdb      <- "data/hydrorivers/HydroRIVERS_v10.gdb/HydroRIVERS_v10.gdb"
+
+out_dir     <- "data/global_watershed_geospatial"
+raster_dir  <- file.path(out_dir, "rasters")
+extract_dir <- file.path(out_dir, "extracted")
+
+walk(c(out_dir, raster_dir, extract_dir),
+     ~dir.create(.x, recursive = TRUE, showWarnings = FALSE))
+
+# Single id column used throughout extraction.
+id_col <- "rowid"
+
+# Original sample table (one row per sample). Everything is ultimately joined
+# back to this so the master table is sample-level.
+all_sites <- readr::read_csv(site_csv, show_col_types = FALSE)
+```
+
+Steps 1–3 load `basins` (HydroBASINS lvl 12) and `hydro_rivers` (HydroRIVERS).
+Because this section can be run on its own, the guard below re-loads them only if
+they are not already in the environment.
+
+```{r load-prerequisites}
+if (!exists("basins")) {
+  basin_files <- list.files(hydrobasins_dir,
+                            pattern   = "hybas.*lev12.*\\.shp$",
+                            full.names = TRUE,
+                            recursive  = TRUE)
+  basins <- purrr::map(basin_files, ~sf::st_read(.x, quiet = TRUE)) %>%
+    dplyr::bind_rows() %>%
+    sf::st_transform(4326) %>%
+    sf::st_make_valid()
+}
+
+if (!exists("hydro_rivers")) {
+  hydro_rivers <- sf::st_read(hydrorivers_gdb, quiet = TRUE)
+}
+```
+
+## 5.1 Unified watersheds and site points
+
+Combine the CONUS and global watershed polygons into a single object keyed by a
+fresh `rowid`. Each unique pour-point location (lat/long) appears once. The same
+`rowid` keys every watershed-scale extraction below.
+
+```{r build-watersheds}
+watersheds <- readRDS("data/global_watersheds.RDS") %>%
+  dplyr::select(Latitude, Longitude) %>%
+  dplyr::bind_rows(readRDS(conus_watershed_rds) %>% sf::st_transform(4326) %>% dplyr::select(Latitude, Longitude)) %>%
+  dplyr::distinct(Latitude, Longitude, .keep_all = TRUE) %>%
+  tibble::rowid_to_column(id_col) %>%
+  # Clean the watershed geometries once, up front, so every extraction below uses the
+  # same valid, dateline-wrapped polygons. The cleaned object is saved for reuse.
+  sf::st_make_valid() %>%
+  dplyr::distinct(rowid, .keep_all = TRUE) %>%
+  # claude suggestion
+  sf::st_wrap_dateline(options = c("WRAPDATELINE=YES", "DATELINEOFFSET=180"),
+                       quiet   = TRUE) %>%
+  sf::st_make_valid()
+
+saveRDS(watersheds, file.path(out_dir, "watersheds_cleaned_for_extraction.RDS"))
+```
+
+Build the matching point object: one point per unique site location, keyed by its
+own `rowid`. This is the object used for every site-scale (i.e., point) extraction.
+
+```{r build-site-points}
+sites_pts <- all_sites %>%
+  dplyr::distinct(Latitude, Longitude) %>%
+  dplyr::arrange(dplyr::desc(Latitude), Longitude) %>%
+  tibble::rowid_to_column(id_col) %>%
+  sf::st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, remove = FALSE)
+```
+
+## 5.2 Selected-flowline (HydroRIVERS) attributes
+
+Trim HydroRIVERS to a buffer around the sites, then snap each site to its
+representative flowline.
+
+```{r select-flowlines}
+sites_buf <- sites_pts %>%
+  sf::st_transform(3857) %>%
+  sf::st_buffer(50000) %>%
+  sf::st_transform(4326)
+
+hydro_rivers_review <- hydro_rivers[sites_buf, ]
+
+# selected_flowlines <- select_flowline_global(flowlines = hydro_rivers_review,
+#                                              sites = sites_pts)
+# 
+# # Drop geometry, re-attach the canonical lat/long, and save the tabular flowline
+# # data. `river_attrs` is the tidy, per-site set of flowline attributes carried into
+# # the master table.
+# 
+# final_hydrorivers_data <- selected_flowlines %>%
+#   sf::st_drop_geometry() %>%
+#   dplyr::select(-dplyr::any_of(c("Latitude", "Longitude"))) %>%
+#   dplyr::left_join(sites_pts %>% 
+#                      sf::st_drop_geometry() %>% 
+#                      dplyr::select(rowid, Latitude, Longitude),
+#                    by = "rowid") %>%
+#   dplyr::select(-dplyr::any_of("geometry"))
+# 
+# saveRDS(final_hydrorivers_data, "data/final_hydrorivers_data.RDS")
+
+final_hydrorivers_data <- readRDS("data/final_hydrorivers_data.RDS")
+
+river_attrs <- final_hydrorivers_data %>%
+  dplyr::transmute(Latitude, 
+                   Longitude,
+                   Status = flowline_status,
+                   HYRIV_ID,
+                   StreamOrder = ORD_STRA,    # Strahler stream order (analogue of NHD streamorde)
+                   DischargeCMS = DIS_AV_CMS,  # mean annual discharge (m3/s)
+                   MainRiv = MAIN_RIV) %>%
+  dplyr::distinct(Latitude, Longitude, .keep_all = TRUE) %>%
+  mutate(Status = case_when(Status == "selected_flowline" ~ "HydroRIVERS feature",
+                            Status == "small_no_flowline" ~ "No HydroRIVERS feature (too small)",
+                            Status == "big_estuary_or_too_large" ~ "No HydroRIVERS feature (estuary)")) %>%
+  mutate(StreamOrder = case_when(Status == "No HydroRIVERS feature (too small)" ~ 1L, 
+                                        Status == "No HydroRIVERS feature (estuary)" ~ 10L,
+                                        TRUE ~ as.integer(StreamOrder)))
+```
+
+## 5.3 Local-basin (HydroBASINS) attributes
+
+Each site falls within one HydroBASINS level-12 polygon. Join those basin
+attributes by point-in-polygon and store the nested Pfafstetter codes (2–10).
+These are the global equivalent to US HUCs.
+
+```{r basin-attrs}
+site_basin_attrs <- sf::st_join(sites_pts,
+                                basins %>% dplyr::select(HYBAS_ID, PFAF_ID, SUB_AREA, UP_AREA, NEXT_DOWN, MAIN_BAS),
+                                join = sf::st_within) %>%
+  sf::st_drop_geometry() %>%
+  mutate(pfaf_2  = substr(as.character(PFAF_ID), 1, 2),
+                pfaf_4  = substr(as.character(PFAF_ID), 1, 4),
+                pfaf_6  = substr(as.character(PFAF_ID), 1, 6),
+                pfaf_8  = substr(as.character(PFAF_ID), 1, 8),
+                pfaf_10 = substr(as.character(PFAF_ID), 1, 10)) %>%
+  dplyr::select(Latitude, Longitude, HYBAS_ID, PFAF_ID,
+                pfaf_2, pfaf_4, pfaf_6, pfaf_8, pfaf_10,
+                SUB_AREA, UP_AREA) %>%
+  dplyr::distinct(Latitude, Longitude, .keep_all = TRUE)
+```
+
+## 5.4 Load geospatial source layers
+
+All raster and vector sources used by both the watershed- and site-scale
+extractions. Download steps (`geodata::*`) are saved locally and only run once.
+Other data was directly downloaded manually.
+
+```{r load-vector-layers}
+# Wastewater treatment plants (point outfalls) from HydroSHEDS:
+hydrowaste <- read.csv("data/global_watershed_geospatial/hydrowaste/HydroWASTE_v10/HydroWASTE_v10.csv") %>%
+  dplyr::select(WASTE_ID, LAT_OUT, LON_OUT, POP_SERVED, WASTE_DIS) %>%
+  sf::st_as_sf(coords = c("LON_OUT", "LAT_OUT"), crs = 4326)
+
+# RESOLVE ecoregions / biomes / realms.
+# (hub.arcgis.com/datasets/esri::resolve-ecoregions-and-biomes/about)
+resolve <- sf::st_read("data/global_watershed_geospatial/resolve/e7c09d3e-4f20-43d9-8873-60c10c28cc7b.gdb/",
+                       quiet = TRUE) %>%
+  dplyr::select(ECO_NAME, BIOME_NAME, REALM)
+
+# GRanD / GDW dams and reservoirs.
+# Lehner et al. 2011, Front. Ecol. Environ. 9(9): 494-502.
+grand_dams <- sf::st_read("data/global_watershed_geospatial/grand/GDW_v1_0_shp/GDW_v1_0_shp/GDW_reservoirs_v1_0.shp",
+                          quiet = TRUE)
+```
+
+```{r load-raster-layers}
+# Population density (GPW v4.11, 2015, 30 arc-sec).
+# earth.gov/ghgcenter/data-catalog/sedac-popdensity-yeargrid5yr-v4.11
+gpw <- terra::rast("data/global_watershed_geospatial/population/gpw_v4_population_density_rev11_2015_30_sec_2015.tif")
+
+# SoilGrids (0-30 cm mean): clay, sand, soil organic carbon, pH.
+soil_path <- "data/global_watershed_geospatial/soilgrids"
+dir.create(soil_path, showWarnings = FALSE)
+
+# Run once; geodata caches results at soil_path.
+geodata::soil_world(var = "clay", depth = 30, stat = "mean", path = soil_path)
+geodata::soil_world(var = "sand", depth = 30, stat = "mean", path = soil_path)
+geodata::soil_world(var = "soc", depth = 30, stat = "mean", path = soil_path)
+geodata::soil_world(var = "phh2o", depth = 30, stat = "mean", path = soil_path)
+
+soil_clay <- terra::rast(list.files(paste0(soil_path, "/soil_world/"), pattern = "clay.*30.*mean",  full.names = TRUE)[1])
+soil_sand <- terra::rast(list.files(paste0(soil_path, "/soil_world/"), pattern = "sand.*30.*mean",  full.names = TRUE)[1])
+soil_soc <- terra::rast(list.files(paste0(soil_path, "/soil_world/"), pattern = "soc.*30.*mean",   full.names = TRUE)[1])
+soil_ph <- terra::rast(list.files(paste0(soil_path, "/soil_world/"), pattern = "phh2o.*30.*mean", full.names = TRUE)[1])
+
+# WorldClim 2.1 climate normals (2.5 arc-min): 12 monthly layers each.
+geodata::worldclim_global(var = "prec", res = 2.5, path = raster_dir)
+geodata::worldclim_global(var = "tmin", res = 2.5, path = raster_dir)
+geodata::worldclim_global(var = "tmax", res = 2.5, path = raster_dir)
+geodata::worldclim_global(var = "tavg", res = 2.5, path = raster_dir)
+
+clim_dir <- file.path(raster_dir, "climate", "wc2.1_2.5m")
+clim_precip <- terra::rast(list.files(clim_dir, pattern = "prec", full.names = TRUE))
+clim_tmin <- terra::rast(list.files(clim_dir, pattern = "tmin", full.names = TRUE))
+clim_tmax <- terra::rast(list.files(clim_dir, pattern = "tmax", full.names = TRUE))
+clim_tavg <- terra::rast(list.files(clim_dir, pattern = "tavg", full.names = TRUE))
+
+# Elevation (2.5 arc-min).
+geodata::elevation_global(res = 2.5, path = raster_dir)
+elev_global <- terra::rast(list.files(file.path(raster_dir, "elevation", "wc2.1_2.5m"),
+                                      pattern = "elev", full.names = TRUE))
+
+# Aridity index (CGIAR; stored x10^4) and net primary productivity.
+aridity <- terra::rast("data/ai_et0.tif")
+npp <- terra::rast("data/npp500m.tif")
+```
+
+```{r load-landcover}
+# ESA-derived landcover fractions, one raster per class.
+lc_vars <- c("trees", "grassland", "shrubs", "cropland", "built", "bare",
+             "snow", "water", "wetland", "mangroves", "moss")
+
+purrr::walk(lc_vars, ~geodata::landcover(var = .x, path = raster_dir))
+
+landcover_files <- list.files(file.path(raster_dir, "landuse"),
+                              full.names = TRUE,
+                              pattern = "\\.tif$|\\.grd$|\\.vrt$|\\.nc$",
+                              recursive = FALSE)
+
+landcover <- purrr::map(landcover_files, terra::rast)
+
+# Name each layer by its matched class; fall back to the filename stem so no
+# layer is silently dropped when the filename doesn't contain an expected var.
+names(landcover) <- purrr::map_chr(landcover_files, function(x) {
+  stem <- tools::file_path_sans_ext(basename(x))
+  matched_var <- lc_vars[stringr::str_detect(stem, lc_vars)]
+  if (length(matched_var) == 0) stem else matched_var[1]
+})
+```
+
+## 5.5 Extraction helpers
+
+`exactextractr` is used for the polygon (watershed) extractions because it is
+area-weighted; `terra::extract` is used for the point (site) extractions and for
+the count/density vector overlays. The helpers below keep both consistent and
+always carry the `id_col` so results can be joined safely (never by just by row 
+position).
+
+```{r helpers-polygon}
+# Area-weighted mean of every layer of `r` per polygon.
+extract_mean_by_polygon <- function(r, polygons, id_col, prefix = NULL) {
+  stopifnot(inherits(r, "SpatRaster"), inherits(polygons, "sf"), id_col %in% names(polygons))
+  
+  if (!is.null(prefix)) names(r) <- paste0(prefix, "_", names(r))
+  
+  vals <- exactextractr::exact_extract(r, polygons, fun = "mean", progress = TRUE) %>%
+    tibble::as_tibble()
+  
+  dplyr::bind_cols(polygons %>% 
+                     sf::st_drop_geometry() %>% 
+                     dplyr::select(rowid),
+                   vals)
+}
+
+# Elevation summary statistics per polygon.
+extract_elevation_by_polygon <- function(r, polygons, id_col) {
+  stopifnot(inherits(r, "SpatRaster"), inherits(polygons, "sf"), id_col %in% names(polygons))
+  
+  vals <- exactextractr::exact_extract(r, polygons, 
+                                       fun = c("mean", "min", "max", "stdev"), 
+                                       progress = TRUE) %>%
+    tibble::as_tibble()
+  
+  names(vals) <- c("elevation_mean_m", "elevation_min_m", "elevation_max_m", "elevation_sd_m")
+  
+  dplyr::bind_cols(
+    polygons %>% sf::st_drop_geometry() %>% dplyr::select(rowid),
+    vals
+  )
+}
+
+# Mean fraction of each landcover class per polygon, returned wide.
+extract_landcover_attributes <- function(watersheds, landcover,
+                                         id_col = "rowid", prefix = "lc") {
+  stopifnot(inherits(watersheds, "sf"), id_col %in% names(watersheds), is.list(landcover))
+  
+  watersheds <- watersheds %>%
+    sf::st_make_valid() %>%
+    sf::st_collection_extract("POLYGON") %>%
+    sf::st_transform(4326)
+  watersheds <- watersheds[!sf::st_is_empty(watersheds), ]
+  
+  if (is.null(names(landcover)) || any(names(landcover) == "")) {
+    names(landcover) <- paste0("landcover_", seq_along(landcover))
+  }
+  
+  landcover_summary <- purrr::imap_dfr(landcover, function(r, landcover_name) {
+    message("Extracting landcover layer: ", landcover_name)
+    
+    # Only coerce if not already a SpatRaster.
+    if (!inherits(r, "SpatRaster")) r <- terra::rast(r)
+    if (terra::nlyr(r) > 1) r <- r[[1]]
+    
+    extracted <- exactextractr::exact_extract(r, watersheds, fun = "mean", progress = TRUE)
+    
+    tibble::tibble("{id_col}" := watersheds[[id_col]],
+                   landcover_class = landcover_name,
+                   mean_fraction = extracted)
+  })
+  
+  landcover_summary %>%
+    mutate(landcover_class = landcover_class %>%
+                    stringr::str_replace_all("[^A-Za-z0-9_]+", "_") %>%
+                    stringr::str_replace_all("_+$", "") %>%
+                    stringr::str_to_lower(),
+                  attribute_name = paste0(prefix, "_", landcover_class, "_mean_fraction")) %>%
+    dplyr::select(rowid, attribute_name, mean_fraction) %>%
+    dplyr::distinct(dplyr::across(rowid), attribute_name, .keep_all = TRUE) %>%
+    tidyr::pivot_wider(names_from  = attribute_name,
+                       values_from = mean_fraction,
+                       values_fn = mean)
+}
+```
+
+```{r helpers-point}
+# Raster cell value(s) at each site point. Every non-ID layer is returned, with
+# names prefixed. Works for single- and multi-layer rasters.
+terra_at_points <- function(r, points, id_col, prefix) {
+  pts <- sf::st_transform(points, terra::crs(r))
+  vals <- terra::extract(r, terra::vect(pts)) %>% dplyr::select(-ID)
+  if (!is.null(prefix)) names(vals) <- paste0(prefix, "_", names(vals))
+  dplyr::bind_cols(points %>% sf::st_drop_geometry() %>% dplyr::select(rowid),
+                   tibble::as_tibble(vals))
+}
+```
+
+## 5.6 Watershed-scale extractions
+
+Each block produces a tibble keyed by the watershed `rowid`. They are reduced
+together at the end of this section. `*Ws` suffixes mark watershed-scale values.
+
+### Climate, elevation, landcover (area-weighted)
+
+```{r ws-climate}
+prec_extract <- extract_mean_by_polygon(clim_precip, watersheds, id_col)
+arrow::write_parquet(prec_extract, file.path(extract_dir, "watershed_worldclim_precip.parquet"))
+
+tavg_extract <- extract_mean_by_polygon(clim_tavg, watersheds, id_col)
+arrow::write_parquet(tavg_extract, file.path(extract_dir, "watershed_worldclim_tavg.parquet"))
+
+tmax_extract <- extract_mean_by_polygon(clim_tmax, watersheds, id_col)
+arrow::write_parquet(tmax_extract, file.path(extract_dir, "watershed_worldclim_tmax.parquet"))
+
+tmin_extract <- extract_mean_by_polygon(clim_tmin, watersheds, id_col)
+arrow::write_parquet(tmin_extract, file.path(extract_dir, "watershed_worldclim_tmin.parquet"))
+```
+
+```{r ws-elevation}
+elev_extract <- extract_elevation_by_polygon(elev_global, watersheds, id_col)
+arrow::write_parquet(elev_extract, file.path(extract_dir, "watershed_elevation.parquet"))
+```
+
+```{r ws-landcover}
+lc_extract <- extract_landcover_attributes(watersheds = watersheds,
+                                           landcover = landcover,
+                                           id_col = id_col,
+                                           prefix = "lc")
+arrow::write_parquet(lc_extract, file.path(extract_dir, "watershed_landcover.parquet"))
+
+purrr::map_dbl(landcover, ~ as.numeric(terra::global(.x, "max", na.rm = TRUE)))
+
+# sanity-check the classes sum appropriately per watershed
+# lc_total_pct should sit at ~100 for each watershed...
+lc_sanity_check <- lc_extract %>%
+  mutate(dplyr::across(-rowid, ~ .x * 100)) %>%
+  mutate(lc_total_pct = rowSums(dplyr::across(-rowid), na.rm = TRUE))
+# ... they do!
+```
+
+### Soil, population, aridity, NPP ({terra} means)
+
+```{r ws-soil}
+# Stack the four soil layers (same grid, from soil_world()) so the polygon
+# overlay is computed once, and use exactextractr (area-weighted) instead of
+# terra::extract. Output is identical in shape to before: rowid + the 4 *Ws cols.
+soil_stack <- c(soil_clay, soil_sand, soil_soc, soil_ph)
+names(soil_stack) <- c("ClayWs", "SandWs", "SocWs", "PhWs")
+
+ws_soil_crs <- sf::st_transform(watersheds, terra::crs(soil_stack))
+
+soil_ws <- exactextractr::exact_extract(soil_stack, ws_soil_crs, 
+                                        fun = "mean", progress = TRUE) %>%
+  tibble::as_tibble() %>%
+  dplyr::rename_with(~ stringr::str_remove(.x, "^mean\\.")) %>%
+  dplyr::bind_cols(watersheds %>% 
+                     sf::st_drop_geometry() %>% 
+                     dplyr::select(rowid),
+                   .) %>%
+  dplyr::relocate(rowid)
+```
+
+```{r ws-population}
+pop_ws <- extract_mean_by_polygon(gpw, watersheds, id_col) %>%
+  dplyr::rename(PopDenWs = 2)
+```
+
+```{r ws-aridity-npp}
+aridity_ws <- extract_mean_by_polygon(aridity, watersheds, id_col) %>%
+  dplyr::rename(AridityWs = 2) %>%
+  mutate(AridityWs = AridityWs / 10000)   # CGIAR aridity index stored x10^4
+
+npp_ws <- extract_mean_by_polygon(npp, watersheds, id_col) %>%
+  dplyr::rename(NPPWs = 2)
+```
+
+### Wastewater treatment plants and dams (point-in-polygon counts)
+
+```{r ws-wwtp}
+wwtp_ws <- sf::st_join(hydrowaste,
+                       watersheds %>% dplyr::select(rowid),
+                       join = sf::st_within) %>%
+  sf::st_drop_geometry() %>%
+  dplyr::filter(!is.na(rowid)) %>%
+  dplyr::group_by(rowid) %>%
+  dplyr::summarize(WWTPCountWs = dplyr::n(),
+                   WWTPPopWs = sum(POP_SERVED, na.rm = TRUE),
+                   .groups = "drop")
+```
+
+```{r ws-dams}
+dam_ws <- sf::st_join(grand_dams,
+                      watersheds %>% dplyr::select(rowid),
+                      join = sf::st_within) %>%
+  sf::st_drop_geometry() %>%
+  dplyr::filter(!is.na(rowid)) %>%
+  dplyr::group_by(rowid) %>%
+  dplyr::summarize(DamCountWs = dplyr::n(),
+                   DamStorWs = sum(CAP_MCM, na.rm = TRUE), # total storage (million m3)
+                   .groups = "drop")
+```
+
+### Dominant ecoregion (largest overlap area)
+
+```{r ws-ecoregion}
+eco_ws <- sf::st_intersection(watersheds %>% 
+                                dplyr::select(rowid) %>% 
+                                sf::st_transform(sf::st_crs(resolve)),
+                              resolve) %>%
+  mutate(overlap_area = sf::st_area(.)) %>%
+  sf::st_drop_geometry() %>%
+  dplyr::group_by(rowid) %>%
+  dplyr::slice_max(overlap_area, n = 1, with_ties = FALSE) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(rowid,
+                EcoregionWs = ECO_NAME,
+                BiomeWs = BIOME_NAME,
+                RealmWs = REALM)
+```
+
+### Assemble watershed attributes
+
+Reduce-join every watershed-scale block by `rowid`, attach the canonical lat/long,
+and add the area-derived densities. Counts default to 0 where no feature was found.
+
+```{r ws-assemble}
+ws_area <- watersheds %>%
+  sf::st_drop_geometry() %>%
+  dplyr::transmute(rowid, 
+                   Latitude, 
+                   Longitude,
+                   WsAreaSqKm = as.numeric(sf::st_area(watersheds)) / 1e6)
+
+watershed_attributes <- list(ws_area,
+                             elev_extract, prec_extract, tmin_extract, tmax_extract, tavg_extract,
+                             lc_extract, soil_ws, pop_ws, aridity_ws, npp_ws,
+                             wwtp_ws, dam_ws, eco_ws) %>%
+  purrr::reduce(dplyr::left_join, by = id_col) %>%
+  mutate(WWTPCountWs = tidyr::replace_na(WWTPCountWs, 0),
+                WWTPPopWs = tidyr::replace_na(WWTPPopWs, 0),
+                DamCountWs = tidyr::replace_na(DamCountWs, 0),
+                DamStorWs = tidyr::replace_na(DamStorWs, 0),
+                WWTPDensWs = WWTPCountWs / WsAreaSqKm,
+                DamDensWs = DamCountWs / WsAreaSqKm)
+
+# Watershed-scale attribute table (one row per watershed).
+readr::write_csv(watershed_attributes, file.path(extract_dir, "watershed_all_attributes.csv"))
+```
+
+## 5.7 Site-scale (point) extractions
+
+The point equivalent of Section 5.6 for all vars that this applies to: instead
+of aggregating over a watershed polygon, take the raster cell value at each site 
+location and the vector feature each site falls within. 
+`*Site` suffixes mark site-scale values.
+
+### Climate and elevation at the point
+
+```{r site-climate-elev}
+prec_site <- terra_at_points(clim_precip, sites_pts, id_col, prefix = "precSite")
+tmin_site <- terra_at_points(clim_tmin, sites_pts, id_col, prefix = "tminSite")
+tmax_site <- terra_at_points(clim_tmax, sites_pts, id_col, prefix = "tmaxSite")
+tavg_site <- terra_at_points(clim_tavg, sites_pts, id_col, prefix = "tavgSite")
+
+elev_site <- terra_at_points(elev_global, sites_pts, id_col, prefix = NULL) %>%
+  dplyr::rename(ElevationSite = 2)
+```
+
+### Soil at the point
+
+```{r site-soil}
+soil_site <- list(terra_at_points(soil_clay, sites_pts, id_col, NULL) %>% dplyr::rename(ClaySite = 2),
+                  terra_at_points(soil_sand, sites_pts, id_col, NULL) %>% dplyr::rename(SandSite = 2),
+                  terra_at_points(soil_soc, sites_pts, id_col, NULL) %>% dplyr::rename(SocSite = 2),
+                  terra_at_points(soil_ph, sites_pts, id_col, NULL) %>% dplyr::rename(PhSite = 2)) %>%
+  purrr::reduce(dplyr::left_join, by = id_col)
+```
+
+### Population, aridity, NPP at the point
+
+```{r site-pop-aridity-npp}
+pop_site <- terra_at_points(gpw, sites_pts, id_col, NULL) %>%
+  dplyr::rename(PopDenSite = 2)
+
+aridity_site <- terra_at_points(aridity, sites_pts, id_col, NULL) %>%
+  dplyr::rename(AriditySite = 2) %>%
+  mutate(AriditySite = AriditySite / 10000)
+
+npp_site <- terra_at_points(npp, sites_pts, id_col, NULL) %>%
+  dplyr::rename(NPPSite = 2)
+```
+
+### Landcover cell fractions at the point
+
+```{r site-landcover}
+lc_site <- purrr::imap(landcover, function(r, nm) {
+  if (!inherits(r, "SpatRaster")) r <- terra::rast(r)
+  if (terra::nlyr(r) > 1) r <- r[[1]]
+  nm_clean <- nm %>%
+    stringr::str_replace_all("[^A-Za-z0-9_]+", "_") %>%
+    stringr::str_replace_all("_+$", "") %>%
+    stringr::str_to_lower()
+  terra_at_points(r, sites_pts, id_col, NULL) %>%
+    dplyr::rename("lc_{nm_clean}_site_fraction" := 2)
+}) %>%
+  purrr::reduce(dplyr::left_join, by = id_col)
+```
+
+### Ecoregion at the point
+
+```{r site-ecoregion}
+eco_site <- sf::st_join(sites_pts %>% sf::st_transform(sf::st_crs(resolve)),
+                        resolve,
+                        join = sf::st_within,
+                        left = TRUE) %>%
+  sf::st_drop_geometry() %>%
+  dplyr::group_by(rowid) %>%
+  dplyr::slice(1) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(rowid,
+                EcoregionSite = ECO_NAME,
+                BiomeSite = BIOME_NAME,
+                RealmSite = REALM)
+```
+
+### Assemble site attributes
+
+```{r site-assemble}
+site_latlong <- sites_pts %>%
+  sf::st_drop_geometry() %>%
+  dplyr::select(rowid, Latitude, Longitude)
+
+site_attributes <- list(site_latlong,
+                        elev_site, prec_site, tmin_site, tmax_site, tavg_site,
+                        lc_site, soil_site, pop_site, aridity_site, npp_site, eco_site) %>%
+  purrr::reduce(dplyr::left_join, by = id_col)
+
+readr::write_csv(site_attributes,
+                 file.path(extract_dir, "site_all_attributes.csv"))
+```
+
+## 5.8 Final per-sample master table
+
+Join everything back to the original sample table so every GROWdb sample carries
+its basin, flowline, watershed-scale, and site-scale attributes. Joins are by
+`Latitude`/`Longitude` (the canonical location key shared by all blocks); the
+internal `rowid`s are dropped first so the two numbering schemes never collide.
+
+```{r master-table}
+ws_join <- watershed_attributes %>% dplyr::select(-rowid)
+site_join <- site_attributes %>% dplyr::select(-rowid)
+
+site_master_table <- all_sites %>%
+  dplyr::left_join(site_basin_attrs, by = c("Latitude", "Longitude")) %>%
+  dplyr::left_join(river_attrs, by = c("Latitude", "Longitude")) %>%
+  dplyr::left_join(ws_join, by = c("Latitude", "Longitude")) %>%
+  dplyr::left_join(site_join, by = c("Latitude", "Longitude"))
+
+saveRDS(site_master_table, file.path(extract_dir, "site_global_master_table.RDS"))
+readr::write_csv(site_master_table, file.path(extract_dir, "site_global_master_table.csv"))
+```

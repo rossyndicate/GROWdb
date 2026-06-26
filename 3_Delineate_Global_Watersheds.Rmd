@@ -1,263 +1,164 @@
+---
+title: "4_global_analysis"
+output: html_document
+date: "2026-06-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, comment = FALSE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(sf)
+library(terra)
+library(elevatr)
+library(lwgeom)
+library(nngeo)
+library(mapview)
+library(leaflet)
+library(units)
+library(geodata)
+library(arrow)
+library(exactextractr)
+
+list.files("src", full.names = TRUE) %>%
+  walk(~source(.))
+
 sf_use_s2(FALSE)
-review_watersheds_global <- function(watersheds,
-                                     sites,
-                                     basins = NULL,
-                                     rivers = NULL,
-                                     site_buffer_m = 2500,
-                                     id_col = "rowid",
-                                     review_col = "review") {
+```
+
+# 1. Setup
+
+```{r paths}
+site_csv <- "data/date_lat_long_grow_KKA_05.05.26.csv"
+conus_watershed_rds <- "data/conus_watersheds.RDS"
+
+hydrobasins_dir <- "data/hydrobasins"
+hydrorivers_dir <- "data/hydrorivers"
+```
+
+# 2. Identify international sites
+
+All GROWdb samples not represented in the CONUS watershed object are routed through this international workflow.
+
+```{r identify-international-sites}
+all_sites <- readr::read_csv(site_csv, show_col_types = FALSE)
+conus_watersheds <- readRDS(conus_watershed_rds)
+
+# If conus_watersheds has sample_name, use that directly. If not, fall back to
+# filtering by coordinates already present in the CONUS watershed table.
+if ("sample_name" %in% names(conus_watersheds)) {
+  intl_sites_all <- all_sites %>%
+    filter(!sample_name %in% conus_watersheds$sample_name)
+} else {
+  conus_coords <- conus_watersheds %>%
+    sf::st_drop_geometry() %>%
+    distinct(Latitude, Longitude) %>%
+    mutate(coord_key = paste(round(Latitude, 6), round(Longitude, 6)))
   
-  stopifnot(inherits(watersheds, "sf"))
-  stopifnot(inherits(sites, "sf"))
-  stopifnot(id_col %in% names(watersheds))
-  stopifnot(id_col %in% names(sites))
-  
-  if (!is.null(basins)) {
-    stopifnot(inherits(basins, "sf"))
-    stopifnot(id_col %in% names(basins))
-  }
-  
-  if (!is.null(rivers)) {
-    stopifnot(inherits(rivers, "sf"))
-    stopifnot(id_col %in% names(rivers))
-  }
-  
-  if (!review_col %in% names(watersheds)) {
-    watersheds[[review_col]] <- NA_character_
-  }
-  
-  remaining <- which(is.na(watersheds[[review_col]]))
-  
-  if (length(remaining) == 0) {
-    message("All international watersheds have been reviewed!")
-    return(watersheds)
-  }
-  
-  message(sprintf("Starting review. %d of %d international watersheds remaining.\n",
-                  length(remaining), nrow(watersheds)))
-  message("Workflow:")
-  message("  1. Point-scale map: watershed + site + rowid-matched HydroBASINS / HydroRIVERS layers")
-  message("  2. Watershed-scale map: full upstream watershed")
-  message("Commands: y = Yes | s = Small | b = Big | m = Maybe/manual | q = Quit & save\n")
-  
-  # ---------------------------------------------------------------------------
-  # Pre-project all layers once to WGS84 before the loop
-  # ---------------------------------------------------------------------------
-  watersheds_wgs <- sf::st_transform(watersheds, 4326)
-  sites_wgs      <- sf::st_transform(sites, 4326)
-  basins_wgs     <- if (!is.null(basins)) sf::st_transform(basins, 4326) else NULL
-  rivers_wgs     <- if (!is.null(rivers)) sf::st_transform(rivers, 4326) else NULL
-  
-  for (i in remaining) {
-    
-    watershed <- watersheds_wgs[i, ]
-    site_id   <- watershed[[id_col]][1]
-    
-    site <- sites_wgs %>%
-      dplyr::filter(.data[[id_col]] == site_id)
-    
-    # -------------------------------------------------------------------------
-    # Basins and rivers are already subset globally, but still need to be matched
-    # to the current watershed/site by rowid.
-    # -------------------------------------------------------------------------
-    local_basin <- NULL
-    if (!is.null(basins_wgs)) {
-      local_basin <- basins_wgs %>%
-        dplyr::filter(.data[[id_col]] == site_id)
-      
-      if (nrow(local_basin) == 0) {
-        local_basin <- NULL
-      }
-    }
-    
-    nearby_rivers <- NULL
-    if (!is.null(rivers_wgs)) {
-      nearby_rivers <- rivers_wgs %>%
-        dplyr::filter(.data[[id_col]] == site_id)
-      
-      if (nrow(nearby_rivers) == 0) {
-        nearby_rivers <- NULL
-      }
-    }
-    
-    # -------------------------------------------------------------------------
-    # Get a readable lat/lon from the site geometry if available
-    # -------------------------------------------------------------------------
-    if (nrow(site) > 0) {
-      site_coords <- sf::st_coordinates(sf::st_geometry(site))[1, ]
-      site_lon <- round(site_coords[["X"]], 6)
-      site_lat <- round(site_coords[["Y"]], 6)
-    } else {
-      site_lon <- NA_real_
-      site_lat <- NA_real_
-    }
-    
-    # -------------------------------------------------------------------------
-    # Bounding boxes
-    # -------------------------------------------------------------------------
-    if (!is.null(local_basin) && nrow(local_basin) > 0) {
-      bb1 <- sf::st_bbox(local_basin)
-    } else if (nrow(site) > 0) {
-      bb1 <- site %>%
-        sf::st_transform(3857) %>%
-        sf::st_buffer(site_buffer_m) %>%
-        sf::st_transform(4326) %>%
-        sf::st_bbox()
-    } else {
-      bb1 <- sf::st_bbox(watershed)
-    }
-    
-    bb2 <- sf::st_bbox(watershed)
-    
-    # -------------------------------------------------------------------------
-    # Map 1: basin-centered / site-centered view
-    # -------------------------------------------------------------------------
-    m1 <- mapview::mapview(
-      watershed,
-      alpha.regions = 0.2,
-      color = "orange",
-      layer.name = "Full upstream watershed"
-    )
-    
-    # if (!is.null(local_basin) && nrow(local_basin) > 0) {
-    #   m1 <- m1 + mapview::mapview(
-    #     local_basin,
-    #     alpha.regions = 0.15,
-    #     color = "purple",
-    #     layer.name = "rowid-matched HydroBASINS"
-    #   )
-    # }
-    
-    if (!is.null(nearby_rivers) && nrow(nearby_rivers) > 0) {
-      m1 <- m1 + mapview::mapview(
-        nearby_rivers,
-        color = "steelblue",
-        lwd = 3,
-        layer.name = "rowid-matched HydroRIVERS"
-      )
-    }
-    
-    if (nrow(site) > 0) {
-      m1 <- m1 + mapview::mapview(
-        site,
-        col.regions = "red",
-        cex = 8,
-        layer.name = "Sample location"
-      )
-    }
-    
-    m1@map <- m1@map %>%
-      leaflet::fitBounds(
-        lng1 = bb1[["xmin"]], lat1 = bb1[["ymin"]],
-        lng2 = bb1[["xmax"]], lat2 = bb1[["ymax"]]
-      )
-    
-    print(m1)
-    
-    message(sprintf("[Map 1/2] [%d / %d] %s: %s | lat/lon: %s, %s",
-                    match(i, remaining), length(remaining),
-                    id_col, site_id,
-                    site_lat, site_lon))
-    
-    if (!is.null(local_basin) && nrow(local_basin) > 0) {
-      message(sprintf("HydroBASINS polygons shown: %d", nrow(local_basin)))
-    }
-    
-    if (!is.null(nearby_rivers) && nrow(nearby_rivers) > 0) {
-      message(sprintf("HydroRIVERS segments shown: %d", nrow(nearby_rivers)))
-    }
-    
-    continue_key <- "INVALID"
-    while (!continue_key %in% c("", "y", "s", "b", "m", "q")) {
-      continue_key <- tolower(trimws(readline(
-        "Press Enter to continue, or enter y/s/b/m/q now: "
-      )))
-    }
-    
-    if (continue_key == "q") {
-      message("Quitting. Progress saved.")
-      break
-    }
-    
-    if (continue_key %in% c("y", "s", "b", "m")) {
-      watersheds[[review_col]][i] <- toupper(continue_key)
-      message(sprintf("  Saved from Map 1: %s\n", toupper(continue_key)))
-      next
-    }
-    
-    # -------------------------------------------------------------------------
-    # Map 2: watershed-centered view
-    # -------------------------------------------------------------------------
-    m2 <- mapview::mapview(
-      watershed,
-      alpha.regions = 0.2,
-      color = "orange",
-      layer.name = "Full upstream watershed"
-    )
-    
-    if (!is.null(local_basin) && nrow(local_basin) > 0) {
-      m2 <- m2 + mapview::mapview(
-        local_basin,
-        alpha.regions = 0.15,
-        color = "purple",
-        layer.name = "rowid-matched HydroBASINS"
-      )
-    }
-    
-    if (!is.null(nearby_rivers) && nrow(nearby_rivers) > 0) {
-      m2 <- m2 + mapview::mapview(
-        nearby_rivers,
-        color = "steelblue",
-        lwd = 3,
-        layer.name = "rowid-matched HydroRIVERS"
-      )
-    }
-    
-    if (nrow(site) > 0) {
-      m2 <- m2 + mapview::mapview(
-        site,
-        col.regions = "red",
-        cex = 8,
-        layer.name = "Sample location"
-      )
-    }
-    
-    m2@map <- m2@map %>%
-      leaflet::fitBounds(
-        lng1 = bb2[["xmin"]], lat1 = bb2[["ymin"]],
-        lng2 = bb2[["xmax"]], lat2 = bb2[["ymax"]]
-      )
-    
-    print(m2)
-    
-    message(sprintf("[Map 2/2] [%d / %d] %s: %s",
-                    match(i, remaining), length(remaining),
-                    id_col, site_id))
-    
-    response <- ""
-    while (!response %in% c("y", "s", "b", "m", "q")) {
-      response <- tolower(trimws(readline("Accept? [y/s/b/m/q]: ")))
-    }
-    
-    if (response == "q") {
-      message("Quitting. Progress saved.")
-      break
-    }
-    
-    watersheds[[review_col]][i] <- toupper(response)
-    message(sprintf("  Saved: %s\n", toupper(response)))
-  }
-  
-  reviewed  <- sum(!is.na(watersheds[[review_col]]))
-  remaining <- sum(is.na(watersheds[[review_col]]))
-  message(sprintf("Done. %d reviewed, %d remaining.", reviewed, remaining))
-  
-  watersheds
+  intl_sites_all <- all_sites %>%
+    mutate(coord_key = paste(round(Latitude, 6), round(Longitude, 6))) %>%
+    filter(!coord_key %in% conus_coords$coord_key) %>%
+    select(-coord_key)
 }
 
+# Unique pour-point locations only. All samples sharing the same coordinate are
+# joined back after watershed delineation/review.
+intl_unique <- intl_sites_all %>%
+  distinct(Latitude, Longitude) %>%
+  arrange(desc(Latitude), Longitude) %>%
+  rowid_to_column("rowid") %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, remove = FALSE)
+
+cat("International samples:", nrow(intl_sites_all), "\n")
+cat("Unique international locations:", nrow(intl_unique), "\n")
+
+mapview(intl_unique, col.regions = "red", cex = 4)
+```
+# 3. Load HydroBASINS level 12
+
+HydroBASINS is used to get the full upstream watershed for each international pour point.
+Level 12 is the finest HydroBASINS level and is the closest global analogue to a local watershed unit.
+
+Download HydroBASINS from HydroSHEDS and unzip all continent-level files needed for the international sites.
+Expected shapefile names usually look like `hybas_na_lev12_v1c.shp`, `hybas_sa_lev12_v1c.shp`, etc.
+
+```{r load-hydrobasins}
+basin_files <- list.files(hydrobasins_dir,
+                          pattern = "hybas.*lev12.*\\.shp$",
+                          full.names = TRUE,
+                          recursive = TRUE)
+
+#stopifnot(length(basin_files) > 0)
+
+basins <- purrr::map(basin_files, ~sf::st_read(.x, quiet = TRUE)) %>%
+  dplyr::bind_rows() %>%
+  sf::st_transform(4326) %>%
+  sf::st_make_valid()
+```
+
+# 4. Load HydroRIVERS
+
+HydroRIVERS is used in two ways:
+
+1. As a review-map overlay.
+2. To split the local HydroBASINS polygon at the pour point and remove the downstream area below the sample location.
+
+Download HydroRIVERS from HydroSHEDS and unzip all continent-level files needed for the international sites.
+Expected shapefile names usually look like `HydroRIVERS_v10_na.shp`, `HydroRIVERS_v10_sa.shp`, etc.
+
+```{r load-hydrorivers}
+hydro_rivers <- st_read("data/hydrorivers/HydroRIVERS_v10.gdb/HydroRIVERS_v10.gdb")
+```
+
+Keep only HydroRIVERS segments near the international sites for faster maps and split calls.
+
+```{r trim-hydrorivers}
+intl_sites_buf <- intl_unique %>%
+  sf::st_transform(3857) %>%
+  sf::st_buffer(50000) %>%
+  sf::st_transform(4326)
+
+hydro_rivers_review <- hydro_rivers[intl_sites_buf, ]
+```
+
+```{r}
+flowline_selections <- select_flowline_global(flowlines = hydro_rivers_review,
+                                              sites = intl_unique,
+                                              river_buffer_m = 20000,
+                                              id_col = "rowid")
+
+saveRDS(flowline_selections, "data/flowline_selections.RDS")
+```
+
+```{r, eval = FALSE}
+delineate_ws(sites = intl_unique %>% filter(!rowid %in% c(to_redo_big$rowid, to_redo$rowid)),
+             flowline_selections = flowline_selections,
+             flowlines_network   = hydro_rivers,
+             basins = basins,
+             flow_acc_raster     = terra::rast("data/hyd_glo_acc_15s/hyd_glo_acc_15s.tif"),
+             flow_dir_raster     = terra::rast("data/hyd_glo_dir_15s/hyd_glo_dir_15s.tif"),
+             flowline_id_col     = "HYRIV_ID",
+             downstream_col      = "NEXT_DOWN",
+             snap_method         = "point",
+             local_basin_pct = 0.80,
+             id_col = "rowid",
+             hybas_id_co = "HYBAS_ID",
+             file_path = "data/intl_watersheds_refined/",
+             use_s2 = FALSE)
+```
+
+```{r}
 sites <- intl_unique %>%
   select(rowid)
+```
 
+```{r}
 watersheds <- list.files("data/intl_watersheds_refined/", full.names = TRUE) %>%
   purrr::map_dfr(~readRDS(.x) %>%
                    dplyr::mutate(rowid = as.integer(tools::file_path_sans_ext(basename(.x)))) %>%
@@ -287,14 +188,15 @@ reviewed_watersheds <- review_watersheds_global(watersheds = watersheds,
                                                 site_buffer_m = 2500,
                                                 id_col = "rowid",
                                                 review_col = "review")
+```
 
-saveRDS(reviewed_watersheds, "data/reviewed_watersheds.RDS")
+What are the watersheds that weren't delineated correctly?
 
-# troubleshooting "bad" delineations:
-
+```{r}
 bad <- reviewed_watersheds %>%
   filter(review != "Y")
 
+# what's wrong with them? List out...
 review_watersheds_global(watersheds = watersheds %>% filter(rowid %in% bad$rowid),
                          sites = sites %>% filter(rowid %in% bad$rowid),
                          basins = basins_review,
@@ -303,11 +205,147 @@ review_watersheds_global(watersheds = watersheds %>% filter(rowid %in% bad$rowid
                          id_col = "rowid",
                          review_col = "review")
 
+```
+
+Fix those watersheds...
+
+
+```{r}
+r1 <- readRDS("data/intl_watersheds_refined/1.RDS")
+
+big_basins <- purrr::map(list.files(hydrobasins_dir,
+                          pattern = "hybas.*lev08.*\\.shp$",
+                          full.names = TRUE,
+                          recursive = TRUE), ~sf::st_read(.x, quiet = TRUE)) %>%
+  dplyr::bind_rows() %>%
+  sf::st_transform(4326) %>%
+  sf::st_make_valid() %>%
+  .[r1,] %>%
+  .[c(143),] %>%
+  select(geometry)
+
+mapview(r1) + big_basins + intl_unique %>% filter(rowid == 1)
+
+final_r1 <- bind_rows(big_basins, r1) %>%
+  summarize() %>%
+  nngeo::st_remove_holes()
+
+mapview(final_r1) + intl_unique %>% filter(rowid == 1)
+
+saveRDS(final_r1, "data/intl_watersheds_refined/1.RDS")
+```
+
+
+```{r}
+# ---------------------------------------------------------------------------
+# Rio Grande not quite right... 32
+# ---------------------------------------------------------------------------
+rio <- readRDS("data/intl_watersheds_refined/32.RDS")
+
+big_basin_files <- list.files(hydrobasins_dir,
+                          pattern = "hybas.*lev05.*\\.shp$",
+                          full.names = TRUE,
+                          recursive = TRUE)
+
+big_basins <- purrr::map(big_basin_files, ~sf::st_read(.x, quiet = TRUE)) %>%
+  dplyr::bind_rows() %>%
+  sf::st_transform(4326) %>%
+  sf::st_make_valid() %>%
+  .[rio,] %>%
+  .[c(26,24,23),] %>%
+  select(geometry)
+
+mapview(rio) + big_basins
+
+final_rio <- bind_rows(big_basins, rio) %>%
+  summarize() %>%
+  nngeo::st_remove_holes()
+
+mapview(final_rio)
+
+saveRDS(final_rio, "data/intl_watersheds_refined/32.RDS")
+```
+
+```{r}
+r2 <- readRDS("data/intl_watersheds_refined/2.RDS")
+
+big_basins <- purrr::map(list.files(hydrobasins_dir,
+                          pattern = "hybas.*lev08.*\\.shp$",
+                          full.names = TRUE,
+                          recursive = TRUE), ~sf::st_read(.x, quiet = TRUE)) %>%
+  dplyr::bind_rows() %>%
+  sf::st_transform(4326) %>%
+  sf::st_make_valid() %>%
+  .[r2,] %>%
+  .[c(66),] %>%
+  select(geometry)
+
+mapview(r2) + big_basins + intl_unique %>% filter(rowid == 2)
+
+final_r2 <- bind_rows(big_basins, r2) %>%
+  summarize() %>%
+  nngeo::st_remove_holes()
+
+mapview(final_r2)
+
+saveRDS(final_r2, "data/intl_watersheds_refined/2.RDS")
+```
+
+```{r}
+r24 <- readRDS("data/intl_watersheds_refined/24.RDS")
+
+big_basins <- purrr::map(list.files(hydrobasins_dir,
+                          pattern = "hybas.*lev05.*\\.shp$",
+                          full.names = TRUE,
+                          recursive = TRUE), ~sf::st_read(.x, quiet = TRUE)) %>%
+  dplyr::bind_rows() %>%
+  .[r24,] %>%
+  sf::st_transform(4326) %>%
+  sf::st_make_valid() %>%
+  .[c(7),] %>%
+  select(geometry)
+
+mapview(r24) + big_basins + intl_unique %>% filter(rowid == 24)
+
+final_r24 <- bind_rows(big_basins, r24) %>%
+  summarize() %>%
+  nngeo::st_remove_holes()
+
+mapview(final_r24)
+
+saveRDS(final_r24, "data/intl_watersheds_refined/24.RDS")
+```
+
+```{r}
+r7 <- readRDS("data/intl_watersheds_refined/7.RDS")
+
+big_basins <- purrr::map(list.files(hydrobasins_dir,
+                          pattern = "hybas.*lev10.*\\.shp$",
+                          full.names = TRUE,
+                          recursive = TRUE), ~sf::st_read(.x, quiet = TRUE)) %>%
+  dplyr::bind_rows() %>%
+  .[r7,] %>%
+  sf::st_transform(4326) %>%
+  sf::st_make_valid() %>%
+  .[c(12,48),] %>%
+  select(geometry)
+
+mapview(r7) + big_basins + intl_unique %>% filter(rowid == 7)
+
+final_r7 <- bind_rows(big_basins, r7) %>%
+  summarize() %>%
+  nngeo::st_remove_holes()
+
+mapview(final_r7)
+
+saveRDS(final_r7, "data/intl_watersheds_refined/7.RDS")
+```
+
+```{r}
 # ---------------------------------------------------------------------------
 # wrong flowline selected: 41
 # ---------------------------------------------------------------------------
 r41_flowline <- select_flowline_global(
-  watersheds    =  watersheds %>% filter(rowid == 41),
   sites         = intl_unique %>% filter(rowid == 41),
   rivers        = hydro_rivers_review,
   river_buffer_m = 10000,
@@ -564,17 +602,17 @@ delineate_neighborhood <- function(site,
   
   return(out)
   
- }
+}
 
 hyd_glo_acc_15s <- terra::rast("data/hyd_glo_acc_15s/hyd_glo_acc_15s.tif")
 
 hyd_glo_dir_15s <- terra::rast("data/hyd_glo_dir_15s/hyd_glo_dir_15s.tif")
 
 r13 <- delineate_neighborhood(site = intl_unique %>% dplyr::filter(rowid == 13),
-  flow_acc_raster = hyd_glo_acc_15s,
-  flow_dir_raster = hyd_glo_dir_15s,
-  search_buffer_m = 500000,
-  id_col          = "rowid") %>%
+                              flow_acc_raster = hyd_glo_acc_15s,
+                              flow_dir_raster = hyd_glo_dir_15s,
+                              search_buffer_m = 500000,
+                              id_col          = "rowid") %>%
   rowid_to_column("index")
 
 m <- mapview::mapview(intl_unique %>% dplyr::filter(rowid == 13),
@@ -695,8 +733,8 @@ saveRDS(r33_, "data/intl_watersheds_refined/33.RDS")
 # ---------------------------------------------------------------------------
 #  needs additional flowlines delineated/review associated flowline: 30, 22, 27, 40, 45, 49, 7
 # ---------------------------------------------------------------------------
-wonky_sites_update_a <- select_flowline_global(watersheds = watersheds %>% filter(rowid %in% c(30, 22, 27, 40, 45, 49, 7)),
-                                               sites = intl_unique,
+wonky_sites_update_a <- select_flowline_global(sites = intl_unique %>% 
+                                                 filter(rowid %in% c(30, 22, 27, 40, 45, 49, 7)),
                                                rivers = hydro_rivers_review,
                                                river_buffer_m = 10000,
                                                id_col = "rowid")
@@ -819,8 +857,7 @@ saveRDS(r7, "data/intl_watersheds_refined/7.RDS")
 # ---------------------------------------------------------------------------
 #  some downstream bits still showing up: 23
 # ---------------------------------------------------------------------------
-r23_flowline <- select_flowline_global(watersheds = watersheds %>% filter(rowid ==23),
-                                       sites = intl_unique,
+r23_flowline <- select_flowline_global(sites = intl_unique %>% filter(rowid ==23),
                                        rivers = hydro_rivers_review,
                                        river_buffer_m = 10000,
                                        id_col = "rowid")
@@ -868,7 +905,7 @@ basins_m <- big_basin_1 %>%
 
 # Local search area around the point
 search_area_m <- site_m %>%
-  sf::st_buffer(80000) %>%
+  sf::st_buffer(100000) %>%
   sf::st_make_valid()
 
 # Only keep basins near the point
@@ -894,7 +931,7 @@ x0 <- site_xy[["X"]]
 y0 <- site_xy[["Y"]]
 
 # Make this longer than your search buffer if needed
-clip_dist_m <- 200000
+clip_dist_m <- 500000
 
 # Wider wedge to keep adjacent basins near the point
 wedge_half_angle_deg <- 70
@@ -905,49 +942,38 @@ center_angle_deg <- 225
 angle1 <- (center_angle_deg - wedge_half_angle_deg) * pi / 180
 angle2 <- (center_angle_deg + wedge_half_angle_deg) * pi / 180
 
-sw_wedge_coords <- matrix(
-  c(
-    x0, y0,
-    x0 + clip_dist_m * cos(angle1), y0 + clip_dist_m * sin(angle1),
-    x0 + clip_dist_m * cos(angle2), y0 + clip_dist_m * sin(angle2),
-    x0, y0
-  ),
-  ncol = 2,
-  byrow = TRUE
-)
+sw_wedge_coords <- matrix(c(x0, y0,
+                            x0 + clip_dist_m * cos(angle1), y0 + clip_dist_m * sin(angle1),
+                            x0 + clip_dist_m * cos(angle2), y0 + clip_dist_m * sin(angle2),
+                            x0, y0),
+                          ncol = 2,
+                          byrow = TRUE)
 
-sw_wedge_m <- sf::st_sf(
-  geometry = sf::st_sfc(
-    sf::st_polygon(list(sw_wedge_coords)),
-    crs = sf::st_crs(site_m)
-  )
-)
+sw_wedge_m <- sf::st_sf(geometry = sf::st_sfc(sf::st_polygon(list(sw_wedge_coords)),
+                                              crs = sf::st_crs(site_m)))
 
 site_keep_m <- site_m %>%
   sf::st_buffer(8000)
 
-sw_clip_m <- rbind(
-  sw_wedge_m,
-  site_keep_m %>% dplyr::select(geometry)
-) %>%
+sw_clip_m <- rbind(sw_wedge_m,
+                   site_keep_m %>% dplyr::select(geometry)) %>%
   sf::st_union() %>%
   sf::st_as_sf() %>%
   sf::st_make_valid()
 
 gaps_sw_m <- sf::st_intersection(
   gaps_m,
-  sw_clip_m
-) %>%
+  sw_clip_m) %>%
   sf::st_make_valid() %>%
   st_cast("POLYGON") %>%
   .[-c(13:16),] 
 
-mapview(gaps_sw_m, col.region = "red") + site_m + big_basin_1
+mapview(gaps_sw_m, col.region = "red") + site_m + big_basin_1 + hydro_rivers %>% .[big_basin_1 %>% st_buffer(1),]
 
 names(gaps_sw_m)[names(gaps_sw_m) == "x"] <- "geometry"
 st_geometry(gaps_sw_m) <- "geometry"
 
-touching_basins_m <- big_basin_1[gaps_sw_m %>% st_buffer(100) %>% st_transform(4326),]
+touching_basins_m <- big_basin_1[gaps_sw_m %>% st_buffer(800) %>% st_transform(4326),]
 
 mapview(touching_basins_m, col.region = "red") + mapview(gaps_sw_m, col.region = "blue") + site_m
 
@@ -955,7 +981,10 @@ touching_basins = touching_basins_m %>%
   sf::st_transform(basins_crs)
 
 touching_flowlines <- hydro_rivers %>%
-  .[touching_basins,]
+  .[touching_basins,] %>%
+  # Amazonas
+  bind_rows(hydro_rivers %>%
+              dplyr::filter(.data$HYRIV_ID  == 60496312))
 
 # 2. Trace upstream HydroRIVERS flowlines
 get_upstream_flowline_ids <- function(target_flowline_ids,
@@ -998,12 +1027,10 @@ target_flowline_ids <- touching_flowlines %>%
   unique() %>%
   stats::na.omit()
 
-upstream_flowline_ids_43 <- get_upstream_flowline_ids(
-  target_flowline_ids = target_flowline_ids,
-  rivers = hydro_rivers,
-  id_col = "HYRIV_ID",
-  down_col = "NEXT_DOWN"
-)
+upstream_flowline_ids_43 <- get_upstream_flowline_ids(target_flowline_ids = target_flowline_ids,
+                                                      rivers = hydro_rivers,
+                                                      id_col = "HYRIV_ID",
+                                                      down_col = "NEXT_DOWN")
 
 
 upstream_flowlines_43 <- hydro_rivers %>%
@@ -1012,27 +1039,26 @@ upstream_flowlines_43 <- hydro_rivers %>%
 
 mapview(upstream_flowlines_43)
 
-
-# 3. Grab all HydroBASINS touched by upstream flowlines
+# Grab all HydroBASINS touched by upstream flowlines
 upstream_flowlines_buffer_43 <- upstream_flowlines_43 %>%
   sf::st_union() %>%
   sf::st_as_sf() %>%
   sf::st_make_valid()
 
-upstream_basins_43 <- basins %>%
-  sf::st_make_valid() %>%
-  .[upstream_flowlines_buffer_43,] %>%
-  bind_rows(gaps_sw_m %>% st_transform(4326)) %>%
-  summarize() %>%
-  nngeo::st_remove_holes()
+sel_43 <- basins[upstream_flowlines_43, ] %>%
+  dplyr::bind_rows(gaps_sw_m %>% sf::st_transform(4326))
+
+upstream_basins_43 <- terra::vect(sel_43) %>%
+  terra::aggregate() %>%  
+  sf::st_as_sf() %>%
+  nngeo::st_remove_holes() 
 
 mapview::mapview(upstream_basins_43, color = "orange", alpha.regions = 0.25) +
-  mapview::mapview(upstream_flowlines_43, color = "blue", lwd = 2) +
+  # mapview::mapview(upstream_flowlines_43, color = "blue", lwd = 2) +
   mapview::mapview(intl_unique %>% dplyr::filter(rowid == 43),
                    col.regions = "black", cex = 8)
 
 saveRDS(upstream_basins_43 %>% mutate(rowid = 43), "data/intl_watersheds_refined/43.RDS")
-
 
 # NEXT, 44, 
 
@@ -1139,7 +1165,10 @@ touching_basins = touching_basins_m %>%
   sf::st_transform(basins_crs)
 
 touching_flowlines <- hydro_rivers %>%
-  .[touching_basins,]
+  .[touching_basins,] %>%
+  # Amazonas
+  bind_rows(hydro_rivers %>%
+              dplyr::filter(.data$HYRIV_ID == 60496312))
 
 # 2. Trace upstream HydroRIVERS flowlines
 get_upstream_flowline_ids <- function(target_flowline_ids,
@@ -1149,10 +1178,8 @@ get_upstream_flowline_ids <- function(target_flowline_ids,
   
   river_links <- rivers %>%
     sf::st_drop_geometry() %>%
-    dplyr::transmute(
-      river_id = .data[[id_col]],
-      downstream_id = .data[[down_col]]
-    ) %>%
+    dplyr::transmute(river_id = .data[[id_col]],
+      downstream_id = .data[[down_col]]) %>%
     dplyr::filter(!is.na(.data$river_id))
   
   upstream_ids <- unique(target_flowline_ids)
@@ -1182,12 +1209,10 @@ target_flowline_ids <- touching_flowlines %>%
   unique() %>%
   stats::na.omit()
 
-upstream_flowline_ids_44 <- get_upstream_flowline_ids(
-  target_flowline_ids = target_flowline_ids,
-  rivers = hydro_rivers,
-  id_col = "HYRIV_ID",
-  down_col = "NEXT_DOWN"
-)
+upstream_flowline_ids_44 <- get_upstream_flowline_ids(target_flowline_ids = target_flowline_ids,
+                                                      rivers = hydro_rivers,
+                                                      id_col = "HYRIV_ID",
+                                                      down_col = "NEXT_DOWN")
 
 
 upstream_flowlines_44 <- hydro_rivers %>%
@@ -1196,19 +1221,19 @@ upstream_flowlines_44 <- hydro_rivers %>%
 
 mapview(upstream_flowlines_44)
 
-
 # 3. Grab all HydroBASINS touched by upstream flowlines
 upstream_flowlines_buffer_44 <- upstream_flowlines_44 %>%
   sf::st_union() %>%
   sf::st_as_sf() %>%
   sf::st_make_valid()
 
-upstream_basins_44 <- basins %>%
-  sf::st_make_valid() %>%
-  .[upstream_flowlines_buffer_44,] %>%
-  bind_rows(gaps_sw_m %>% st_transform(4326)) %>%
-  summarize() %>%
-  nngeo::st_remove_holes()
+sel_44 <- basins[upstream_flowlines_44, ] %>%
+  dplyr::bind_rows(gaps_sw_m %>% sf::st_transform(4326))
+
+upstream_basins_44 <- terra::vect(sel_44) %>%
+  terra::aggregate() %>%  
+  sf::st_as_sf() %>%
+  nngeo::st_remove_holes() 
 
 mapview::mapview(upstream_basins_44, color = "orange", alpha.regions = 0.25) +
   mapview::mapview(upstream_flowlines_44, color = "blue", lwd = 2) +
@@ -1283,3 +1308,242 @@ yojoa_basins_by_rowid %>%
       file = file.path(output_dir, paste0(.y, ".rds"))
     )
   })
+
+```
+
+Re-review:
+```{r}
+watersheds <- list.files("data/intl_watersheds_refined/", full.names = TRUE) %>%
+  purrr::map_dfr(~readRDS(.x) %>%
+                   dplyr::mutate(rowid = as.integer(tools::file_path_sans_ext(basename(.x)))) %>%
+                   dplyr::select(rowid) %>%
+                   nngeo::st_remove_holes())
+
+big_basin_files <- list.files(hydrobasins_dir,
+                          pattern = "hybas.*lev03.*\\.shp$",
+                          full.names = TRUE,
+                          recursive = TRUE)
+
+big_basins <- purrr::map(big_basin_files, ~sf::st_read(.x, quiet = TRUE)) %>%
+  dplyr::bind_rows() %>%
+  sf::st_transform(4326) %>%
+  sf::st_make_valid()
+
+big_basins_review <- big_basins %>%
+  st_join(., watersheds, left = FALSE) %>%
+  select(HYBAS_ID, rowid)
+
+
+review_watersheds_global_final <- function(watersheds,
+                                     sites,
+                                     basins = NULL,
+                                     rivers = NULL,
+                                     site_buffer_m = 2500,
+                                     id_col = "rowid",
+                                     review_col = "review") {
+
+  stopifnot(inherits(watersheds, "sf"))
+  stopifnot(inherits(sites, "sf"))
+  stopifnot(id_col %in% names(watersheds))
+  stopifnot(id_col %in% names(sites))
+
+  if (!is.null(basins)) {
+    stopifnot(inherits(basins, "sf"))
+  }
+
+  if (!is.null(rivers)) {
+    stopifnot(inherits(rivers, "sf"))
+    stopifnot(id_col %in% names(rivers))
+  }
+
+  if (!review_col %in% names(watersheds)) {
+    watersheds[[review_col]] <- NA_character_
+  }
+
+  remaining <- which(is.na(watersheds[[review_col]]))
+
+  if (length(remaining) == 0) {
+    message("All international watersheds have been reviewed!")
+    return(watersheds)
+  }
+
+  message(sprintf("Starting review. %d of %d international watersheds remaining.\n",
+                  length(remaining), nrow(watersheds)))
+  message("Workflow:")
+  message("  Single map: upstream watershed + HydroBASINS overlapping the watershed extent + HydroRIVERS + site, zoomed to the rivers extent")
+  message("Commands: y = Yes | s = Small | b = Big | m = Maybe/manual | q = Quit & save\n")
+
+  # ---------------------------------------------------------------------------
+  # Pre-project all layers once to WGS84 before the loop
+  # ---------------------------------------------------------------------------
+  watersheds_wgs <- sf::st_transform(watersheds, 4326)
+  sites_wgs      <- sf::st_transform(sites, 4326)
+  basins_wgs     <- if (!is.null(basins)) sf::st_transform(basins, 4326) else NULL
+  rivers_wgs     <- if (!is.null(rivers)) sf::st_transform(rivers, 4326) else NULL
+
+  for (i in remaining) {
+
+    watershed <- watersheds_wgs[i, ]
+    site_id   <- watershed[[id_col]][1]
+
+    site <- sites_wgs %>%
+      dplyr::filter(.data[[id_col]] == site_id)
+
+    # -------------------------------------------------------------------------
+    # Basins = all HydroBASINS polygons overlapping the watershed extent (bbox).
+    # -------------------------------------------------------------------------
+    local_basin <- NULL
+    if (!is.null(basins_wgs)) {
+      ws_extent <- sf::st_as_sfc(sf::st_bbox(watershed))
+      hits <- lengths(sf::st_intersects(basins_wgs, ws_extent)) > 0
+      local_basin <- basins_wgs[hits, ]
+      # Drop duplicate basin polygons (the same basin can appear once per
+      # rowid/site it maps to) so each distinct basin is drawn only once.
+      local_basin <- local_basin[!duplicated(sf::st_geometry(local_basin)), ]
+      if (nrow(local_basin) == 0) local_basin <- NULL
+    }
+
+    nearby_rivers <- NULL
+    if (!is.null(rivers_wgs)) {
+      nearby_rivers <- rivers_wgs %>%
+        dplyr::filter(.data[[id_col]] == site_id)
+
+      if (nrow(nearby_rivers) == 0) {
+        nearby_rivers <- NULL
+      }
+    }
+
+    # -------------------------------------------------------------------------
+    # Readable lat/lon from the site geometry if available
+    # -------------------------------------------------------------------------
+    if (nrow(site) > 0) {
+      site_coords <- sf::st_coordinates(sf::st_geometry(site))[1, ]
+      site_lon <- round(site_coords[["X"]], 6)
+      site_lat <- round(site_coords[["Y"]], 6)
+    } else {
+      site_lon <- NA_real_
+      site_lat <- NA_real_
+    }
+
+    # -------------------------------------------------------------------------
+    # Bounding box = rivers extent (with sensible fallbacks if no rivers match)
+    # -------------------------------------------------------------------------
+    if (!is.null(nearby_rivers) && nrow(nearby_rivers) > 0) {
+      bb <- sf::st_bbox(nearby_rivers)
+    } else if (!is.null(local_basin) && nrow(local_basin) > 0) {
+      bb <- sf::st_bbox(local_basin)
+    } else if (nrow(site) > 0) {
+      bb <- site %>%
+        sf::st_transform(3857) %>%
+        sf::st_buffer(site_buffer_m) %>%
+        sf::st_transform(4326) %>%
+        sf::st_bbox()
+    } else {
+      bb <- sf::st_bbox(watershed)
+    }
+
+    # -------------------------------------------------------------------------
+    # Single map
+    # -------------------------------------------------------------------------
+    m <- mapview::mapview(
+      watershed,
+      alpha.regions = 0.2,
+      color = "orange",
+      layer.name = "Full upstream watershed"
+    )
+
+    if (!is.null(local_basin) && nrow(local_basin) > 0) {
+      m <- m + mapview::mapview(
+        local_basin,
+        alpha.regions = 0.15,
+        color = "purple",
+        layer.name = "Overlapping HydroBASINS"
+      )
+    }
+
+    if (!is.null(nearby_rivers) && nrow(nearby_rivers) > 0) {
+      m <- m + mapview::mapview(
+        nearby_rivers,
+        color = "steelblue",
+        lwd = 3,
+        layer.name = "rowid-matched HydroRIVERS"
+      )
+    }
+
+    if (nrow(site) > 0) {
+      m <- m + mapview::mapview(
+        site,
+        col.regions = "red",
+        cex = 8,
+        layer.name = "Sample location"
+      )
+    }
+
+    m@map <- m@map %>%
+      leaflet::fitBounds(
+        lng1 = bb[["xmin"]], lat1 = bb[["ymin"]],
+        lng2 = bb[["xmax"]], lat2 = bb[["ymax"]]
+      )
+
+    print(m)
+
+    message(sprintf("[%d / %d] %s: %s | lat/lon: %s, %s",
+                    match(i, remaining), length(remaining),
+                    id_col, site_id,
+                    site_lat, site_lon))
+
+    if (!is.null(local_basin) && nrow(local_basin) > 0) {
+      message(sprintf("HydroBASINS polygons shown: %d", nrow(local_basin)))
+    }
+
+    if (!is.null(nearby_rivers) && nrow(nearby_rivers) > 0) {
+      message(sprintf("HydroRIVERS segments shown: %d", nrow(nearby_rivers)))
+    }
+
+    response <- ""
+    while (!response %in% c("y", "s", "b", "m", "q")) {
+      response <- tolower(trimws(readline("Accept? [y/s/b/m/q]: ")))
+    }
+
+    if (response == "q") {
+      message("Quitting. Progress saved.")
+      break
+    }
+
+    watersheds[[review_col]][i] <- toupper(response)
+    message(sprintf("  Saved: %s\n", toupper(response)))
+  }
+
+  reviewed  <- sum(!is.na(watersheds[[review_col]]))
+  remaining <- sum(is.na(watersheds[[review_col]]))
+  message(sprintf("Done. %d reviewed, %d remaining.", reviewed, remaining))
+
+  watersheds
+}
+
+final_review <- review_watersheds_global_final(watersheds = watersheds,
+                                                sites = intl_unique,
+                                                basins = big_basins_review,
+                                                rivers = hydro_rivers_review %>% st_join(watersheds, left = FALSE),
+                                                site_buffer_m = 2500,
+                                                id_col = "rowid",
+                                                review_col = "review")
+```
+
+... look good now!
+
+Bind all together and save:
+```{r}
+global_watersheds <- list.files("data/intl_watersheds_refined/", full.names = TRUE) %>%
+  purrr::map_dfr(~readRDS(.x) %>%
+                   dplyr::mutate(rowid = as.integer(tools::file_path_sans_ext(basename(.x)))) %>%
+                   dplyr::select(rowid) %>%
+                   nngeo::st_remove_holes()) %>%
+  left_join(., intl_unique %>% st_drop_geometry(), by = "rowid")
+
+global_watersheds_all <- global_watersheds %>%
+  right_join(.,
+             intl_sites_all, by = c("Longitude", "Latitude"))
+
+saveRDS(global_watersheds_all, "data/global_watersheds.RDS")
+```

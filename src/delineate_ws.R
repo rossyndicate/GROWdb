@@ -574,29 +574,3 @@ delineate_ws <- function(sites,
   
   out
 }
-
-
-hyd_glo_acc_15s <- terra::rast(
-  "data/hyd_glo_acc_15s/hyd_glo_acc_15s.tif"
-)
-
-hyd_glo_dir_15s <- terra::rast(
-  "data/hyd_glo_dir_15s/hyd_glo_dir_15s.tif"
-)
-
-watersheds <- delineate_ws(
-  sites               = intl_unique %>% filter(!rowid %in% c(to_redo_big$rowid, to_redo$rowid)),
-  flowline_selections = flowline_selections,
-  flowlines_network   = hydro_rivers,
-  basins              = basins,
-  flow_acc_raster     = hyd_glo_acc_15s,
-  flow_dir_raster     = hyd_glo_dir_15s,
-  flowline_id_col     = "HYRIV_ID",
-  downstream_col      = "NEXT_DOWN",
-  snap_method         = "point",
-  local_basin_pct     = 0.80,
-  id_col              = "rowid",
-  hybas_id_col        = "HYBAS_ID",
-  file_path = "data/intl_watersheds_refined/",
-  use_s2 = FALSE
-)
