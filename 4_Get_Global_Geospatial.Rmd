@@ -1,5 +1,5 @@
 ---
-title: "4_global_analysis — Section 5: Geospatial extraction"
+title: "Global: Grabbing Geospatial Variables"
 output: html_document
 date: "2026-06-25"
 ---
