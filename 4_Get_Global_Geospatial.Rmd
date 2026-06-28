@@ -158,6 +158,28 @@ hydro_rivers_review <- hydro_rivers[sites_buf, ]
 
 final_hydrorivers_data <- readRDS("data/final_hydrorivers_data.RDS")
 
+# fix a few:
+# selected_flowlines_fix <- select_flowline_global(flowlines = hydro_rivers_review,
+#                                              sites = sites_pts %>% filter(rowid %in% c(73,17)))
+# 
+# # Drop geometry, re-attach the canonical lat/long, and save the tabular flowline
+# # data. `river_attrs` is the tidy, per-site set of flowline attributes carried into
+# # the master table.
+# selected_flowlines_fix <- selected_flowlines_fix %>%
+#   sf::st_drop_geometry() %>%
+#   dplyr::select(-dplyr::any_of(c("Latitude", "Longitude"))) %>%
+#   dplyr::left_join(sites_pts %>%
+#                      sf::st_drop_geometry() %>%
+#                      dplyr::select(rowid, Latitude, Longitude),
+#                    by = "rowid") %>%
+#   dplyr::select(-dplyr::any_of("geometry"))
+# 
+# final_hydrorivers_data_ <- final_hydrorivers_data %>%
+#   filter(!rowid %in% c(73,17)) %>%
+#   bind_rows(selected_flowlines_fix)
+# 
+# saveRDS(final_hydrorivers_data_, "data/final_hydrorivers_data.RDS")
+
 river_attrs <- final_hydrorivers_data %>%
   dplyr::transmute(Latitude, 
                    Longitude,
@@ -171,8 +193,8 @@ river_attrs <- final_hydrorivers_data %>%
                             Status == "small_no_flowline" ~ "No HydroRIVERS feature (too small)",
                             Status == "big_estuary_or_too_large" ~ "No HydroRIVERS feature (estuary)")) %>%
   mutate(StreamOrder = case_when(Status == "No HydroRIVERS feature (too small)" ~ 1L, 
-                                        Status == "No HydroRIVERS feature (estuary)" ~ 10L,
-                                        TRUE ~ as.integer(StreamOrder)))
+                                 Status == "No HydroRIVERS feature (estuary)" ~ 10L,
+                                 TRUE ~ as.integer(StreamOrder)))
 ```
 
 ## 5.3 Local-basin (HydroBASINS) attributes
@@ -187,10 +209,10 @@ site_basin_attrs <- sf::st_join(sites_pts,
                                 join = sf::st_within) %>%
   sf::st_drop_geometry() %>%
   mutate(pfaf_2  = substr(as.character(PFAF_ID), 1, 2),
-                pfaf_4  = substr(as.character(PFAF_ID), 1, 4),
-                pfaf_6  = substr(as.character(PFAF_ID), 1, 6),
-                pfaf_8  = substr(as.character(PFAF_ID), 1, 8),
-                pfaf_10 = substr(as.character(PFAF_ID), 1, 10)) %>%
+         pfaf_4  = substr(as.character(PFAF_ID), 1, 4),
+         pfaf_6  = substr(as.character(PFAF_ID), 1, 6),
+         pfaf_8  = substr(as.character(PFAF_ID), 1, 8),
+         pfaf_10 = substr(as.character(PFAF_ID), 1, 10)) %>%
   dplyr::select(Latitude, Longitude, HYBAS_ID, PFAF_ID,
                 pfaf_2, pfaf_4, pfaf_6, pfaf_8, pfaf_10,
                 SUB_AREA, UP_AREA) %>%
@@ -258,9 +280,8 @@ geodata::elevation_global(res = 2.5, path = raster_dir)
 elev_global <- terra::rast(list.files(file.path(raster_dir, "elevation", "wc2.1_2.5m"),
                                       pattern = "elev", full.names = TRUE))
 
-# Aridity index (CGIAR; stored x10^4) and net primary productivity.
+# Aridity index (CGIAR; stored x10^4) 
 aridity <- terra::rast("data/ai_et0.tif")
-npp <- terra::rast("data/npp500m.tif")
 ```
 
 ```{r load-landcover}
@@ -358,10 +379,10 @@ extract_landcover_attributes <- function(watersheds, landcover,
   
   landcover_summary %>%
     mutate(landcover_class = landcover_class %>%
-                    stringr::str_replace_all("[^A-Za-z0-9_]+", "_") %>%
-                    stringr::str_replace_all("_+$", "") %>%
-                    stringr::str_to_lower(),
-                  attribute_name = paste0(prefix, "_", landcover_class, "_mean_fraction")) %>%
+             stringr::str_replace_all("[^A-Za-z0-9_]+", "_") %>%
+             stringr::str_replace_all("_+$", "") %>%
+             stringr::str_to_lower(),
+           attribute_name = paste0(prefix, "_", landcover_class, "_mean_fraction")) %>%
     dplyr::select(rowid, attribute_name, mean_fraction) %>%
     dplyr::distinct(dplyr::across(rowid), attribute_name, .keep_all = TRUE) %>%
     tidyr::pivot_wider(names_from  = attribute_name,
@@ -425,7 +446,7 @@ lc_sanity_check <- lc_extract %>%
 # ... they do!
 ```
 
-### Soil, population, aridity, NPP ({terra} means)
+### Soil, population, aridity ({terra} means)
 
 ```{r ws-soil}
 # Stack the four soil layers (same grid, from soil_world()) so the polygon
@@ -452,13 +473,10 @@ pop_ws <- extract_mean_by_polygon(gpw, watersheds, id_col) %>%
   dplyr::rename(PopDenWs = 2)
 ```
 
-```{r ws-aridity-npp}
+```{r ws-aridity}
 aridity_ws <- extract_mean_by_polygon(aridity, watersheds, id_col) %>%
   dplyr::rename(AridityWs = 2) %>%
   mutate(AridityWs = AridityWs / 10000)   # CGIAR aridity index stored x10^4
-
-npp_ws <- extract_mean_by_polygon(npp, watersheds, id_col) %>%
-  dplyr::rename(NPPWs = 2)
 ```
 
 ### Wastewater treatment plants and dams (point-in-polygon counts)
@@ -520,15 +538,15 @@ ws_area <- watersheds %>%
 
 watershed_attributes <- list(ws_area,
                              elev_extract, prec_extract, tmin_extract, tmax_extract, tavg_extract,
-                             lc_extract, soil_ws, pop_ws, aridity_ws, npp_ws,
+                             lc_extract, soil_ws, pop_ws, aridity_ws,
                              wwtp_ws, dam_ws, eco_ws) %>%
   purrr::reduce(dplyr::left_join, by = id_col) %>%
   mutate(WWTPCountWs = tidyr::replace_na(WWTPCountWs, 0),
-                WWTPPopWs = tidyr::replace_na(WWTPPopWs, 0),
-                DamCountWs = tidyr::replace_na(DamCountWs, 0),
-                DamStorWs = tidyr::replace_na(DamStorWs, 0),
-                WWTPDensWs = WWTPCountWs / WsAreaSqKm,
-                DamDensWs = DamCountWs / WsAreaSqKm)
+         WWTPPopWs = tidyr::replace_na(WWTPPopWs, 0),
+         DamCountWs = tidyr::replace_na(DamCountWs, 0),
+         DamStorWs = tidyr::replace_na(DamStorWs, 0),
+         WWTPDensWs = WWTPCountWs / WsAreaSqKm,
+         DamDensWs = DamCountWs / WsAreaSqKm)
 
 # Watershed-scale attribute table (one row per watershed).
 readr::write_csv(watershed_attributes, file.path(extract_dir, "watershed_all_attributes.csv"))
@@ -563,18 +581,15 @@ soil_site <- list(terra_at_points(soil_clay, sites_pts, id_col, NULL) %>% dplyr:
   purrr::reduce(dplyr::left_join, by = id_col)
 ```
 
-### Population, aridity, NPP at the point
+### Population, aridity at the point
 
-```{r site-pop-aridity-npp}
+```{r site-pop-aridity}
 pop_site <- terra_at_points(gpw, sites_pts, id_col, NULL) %>%
   dplyr::rename(PopDenSite = 2)
 
 aridity_site <- terra_at_points(aridity, sites_pts, id_col, NULL) %>%
   dplyr::rename(AriditySite = 2) %>%
   mutate(AriditySite = AriditySite / 10000)
-
-npp_site <- terra_at_points(npp, sites_pts, id_col, NULL) %>%
-  dplyr::rename(NPPSite = 2)
 ```
 
 ### Landcover cell fractions at the point
@@ -619,7 +634,7 @@ site_latlong <- sites_pts %>%
 
 site_attributes <- list(site_latlong,
                         elev_site, prec_site, tmin_site, tmax_site, tavg_site,
-                        lc_site, soil_site, pop_site, aridity_site, npp_site, eco_site) %>%
+                        lc_site, soil_site, pop_site, aridity_site, eco_site) %>%
   purrr::reduce(dplyr::left_join, by = id_col)
 
 readr::write_csv(site_attributes,
@@ -637,12 +652,54 @@ internal `rowid`s are dropped first so the two numbering schemes never collide.
 ws_join <- watershed_attributes %>% dplyr::select(-rowid)
 site_join <- site_attributes %>% dplyr::select(-rowid)
 
+# Use only CONUS values that are still valid global analogues.
+growdb_conus_values <- read_csv("data/0-shared/GROWdb_20260528.csv", show_col_types = FALSE) %>%
+  dplyr::filter(conus == TRUE) %>%
+  dplyr::select(sample_name = SampleName,
+                AreaSqKmWs_growdb = AreaSqKmWs,
+                delineation_type_growdb = delineation_type,
+                AriditySite_growdb = AriditySite,
+                AridityWs_growdb = AridityWs)
+
 site_master_table <- all_sites %>%
   dplyr::left_join(site_basin_attrs, by = c("Latitude", "Longitude")) %>%
   dplyr::left_join(river_attrs, by = c("Latitude", "Longitude")) %>%
   dplyr::left_join(ws_join, by = c("Latitude", "Longitude")) %>%
-  dplyr::left_join(site_join, by = c("Latitude", "Longitude"))
+  dplyr::left_join(site_join, by = c("Latitude", "Longitude")) %>%
+  rename(AreaSqKmWs = WsAreaSqKm) %>%
+  dplyr::left_join(growdb_conus_values, by = "sample_name") %>%
+  dplyr::mutate(AriditySite = dplyr::coalesce(AriditySite_growdb, AriditySite),
+                AridityWs = dplyr::coalesce(AridityWs_growdb, AridityWs),
+                AreaSqKmWs = dplyr::coalesce(AreaSqKmWs_growdb, AreaSqKmWs),
+                delineation_type = dplyr::if_else(
+                  !is.na(delineation_type_growdb),
+                  delineation_type_growdb,
+                  "HydroSHEDS")) %>%
+  dplyr::select(-dplyr::ends_with("_growdb")) %>%
+  dplyr::select(sample_name, Latitude, Longitude, Collection_Date,
+                delineation_type,
+                hydrosheds_status = Status,
+                AreaSqKmWs,
+                everything(),
+                -dplyr::any_of("rowid")) %>%
+  dplyr::mutate(dplyr::across(-sample_name,
+                              ~ dplyr::if_else(sample_name == "marshallgulch_2019_sw_WHONDRS-S19S_0035",
+                                               .x[sample_name == "marshallgulch_2019_sed_WHONDRS-S19S_0035"][1],
+                                               .x))) %>%
+  mutate(lc_shrubs_mean_fraction = ifelse(lc_shrubs_mean_fraction == "NaN", 0, lc_shrubs_mean_fraction),
+         lc_shrubs_site_fraction = ifelse(is.na(lc_shrubs_site_fraction), 0, lc_shrubs_site_fraction))
+
 
 saveRDS(site_master_table, file.path(extract_dir, "site_global_master_table.RDS"))
 readr::write_csv(site_master_table, file.path(extract_dir, "site_global_master_table.csv"))
 ```
+
+
+```{r}
+summarize_na <- site_master_table %>%
+  summarise(across(everything(), ~ sum(is.na(.x)))) %>%
+  pivot_longer(everything(), names_to = "column", values_to = "n_na") %>%
+  filter(n_na > 0) %>%
+  arrange(desc(n_na))
+```
+

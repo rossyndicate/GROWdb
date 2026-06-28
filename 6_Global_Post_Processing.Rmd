@@ -1,0 +1,384 @@
+---
+title: "Post-process Global Geospatial Master Table"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  comment = FALSE
+)
+```
+
+# Post-process global geospatial master table
+
+This RMarkdown runs after `4-get-geospatial`.
+
+It fills point-level gaps where the sample point falls in a raster or vector
+coverage gap.
+
+Rules:
+
+- For raster-backed **site-scale soil and aridity variables**, fill missing
+  values from the nearest non-`NA` grid cell using
+  `terra::extract(search_radius = ...)`.
+- For RESOLVE ecoregion site variables, fill missing values from the nearest
+  RESOLVE polygon.
+- Add a `notes` column describing which variables were filled this way.
+- Landcover is not changed in this post-processing step.
+- Write the updated `site_global_master_table.RDS` and `.csv`.
+
+```{r libraries}
+library(tidyverse)
+library(sf)
+library(terra)
+library(geodata)
+
+sf::sf_use_s2(FALSE)
+```
+
+## 1. Paths and inputs
+
+```{r paths}
+out_dir     <- "data/global_watershed_geospatial"
+extract_dir <- file.path(out_dir, "extracted")
+soil_path   <- file.path(out_dir, "soilgrids")
+
+master_rds <- file.path(extract_dir, "site_global_master_table.RDS")
+master_csv <- file.path(extract_dir, "site_global_master_table.csv")
+```
+
+```{r read-master}
+if (file.exists(master_rds)) {
+  site_master_table <- readRDS(master_rds)
+} else if (file.exists(master_csv)) {
+  site_master_table <- readr::read_csv(master_csv, show_col_types = FALSE)
+} else {
+  stop("Could not find site_global_master_table.RDS or site_global_master_table.csv in ", extract_dir)
+}
+
+if (!"notes" %in% names(site_master_table)) {
+  site_master_table <- site_master_table %>%
+    dplyr::mutate(notes = NA_character_)
+}
+
+site_master_table <- site_master_table %>%
+  dplyr::mutate(notes = as.character(notes))
+```
+
+## 2. Load source layers needed for filling gaps
+
+These should already exist locally from the main geospatial workflow. The
+`geodata::soil_world()` calls are included so the script can also rebuild the
+local SoilGrids cache if needed.
+
+```{r load-source-layers}
+# SoilGrids rasters --------------------------------------------------------
+
+dir.create(soil_path, recursive = TRUE, showWarnings = FALSE)
+
+# geodata::soil_world(var = "clay",  depth = 30, stat = "mean", path = soil_path)
+# geodata::soil_world(var = "sand",  depth = 30, stat = "mean", path = soil_path)
+# geodata::soil_world(var = "soc",   depth = 30, stat = "mean", path = soil_path)
+# geodata::soil_world(var = "phh2o", depth = 30, stat = "mean", path = soil_path)
+
+soil_clay <- terra::rast(list.files(file.path(soil_path, "soil_world"), pattern = "clay.*30.*mean",  full.names = TRUE)[1])
+soil_sand <- terra::rast(list.files(file.path(soil_path, "soil_world"), pattern = "sand.*30.*mean",  full.names = TRUE)[1])
+soil_soc  <- terra::rast(list.files(file.path(soil_path, "soil_world"), pattern = "soc.*30.*mean",   full.names = TRUE)[1])
+soil_ph   <- terra::rast(list.files(file.path(soil_path, "soil_world"), pattern = "phh2o.*30.*mean", full.names = TRUE)[1])
+
+# Aridity -----------------------------------------------------------------
+aridity <- terra::rast("data/ai_et0.tif")
+
+# RESOLVE ecoregions ------------------------------------------------------
+resolve <- sf::st_read(
+  "data/global_watershed_geospatial/resolve/e7c09d3e-4f20-43d9-8873-60c10c28cc7b.gdb/",
+  quiet = TRUE
+) %>%
+  dplyr::select(ECO_NAME, BIOME_NAME, REALM)
+```
+
+## 3. Helper functions
+
+```{r helper-functions}
+append_note <- function(existing, new_note) {
+  dplyr::case_when(
+    is.na(existing) | existing == "" ~ new_note,
+    stringr::str_detect(existing, stringr::fixed(new_note)) ~ existing,
+    TRUE ~ paste(existing, new_note, sep = " | ")
+  )
+}
+
+# Faster raster gap fill:
+# terra::extract(search_radius = ...) searches for the nearest non-NA cell
+# within search_radius_m when the point itself lands on an NA cell.
+fill_nearest_raster_fast <- function(df,
+                                     r,
+                                     col,
+                                     note_text,
+                                     search_radius_m = 50000) {
+
+  if (!col %in% names(df)) {
+    message("Skipping missing column: ", col)
+    return(df)
+  }
+
+  if (!inherits(r, "SpatRaster")) {
+    r <- terra::rast(r)
+  }
+
+  if (terra::nlyr(r) > 1) {
+    r <- r[[1]]
+  }
+
+  # Robust missing index. Works for numeric and non-numeric columns.
+  missing_idx <- which(is.na(df[[col]]))
+
+  if (is.numeric(df[[col]])) {
+    missing_idx <- which(is.na(df[[col]]) | is.nan(df[[col]]))
+  }
+
+  missing_idx <- missing_idx[!is.na(missing_idx)]
+
+  if (length(missing_idx) == 0) {
+    return(df)
+  }
+
+  pts_missing <- df[missing_idx, ] %>%
+    sf::st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, remove = FALSE) %>%
+    sf::st_transform(terra::crs(r))
+
+  extracted <- tryCatch(
+    terra::extract(
+      r,
+      terra::vect(pts_missing),
+      search_radius = search_radius_m
+    ),
+    error = function(e) {
+      warning("terra::extract failed for ", col, ": ", e$message)
+      NULL
+    }
+  )
+
+  if (is.null(extracted)) {
+    return(df)
+  }
+
+  vals <- extracted %>%
+    dplyr::select(-ID) %>%
+    dplyr::pull(1)
+
+  fillable <- !is.na(vals)
+
+  fill_idx <- missing_idx[fillable]
+  fill_vals <- vals[fillable]
+
+  # Protect against NA subscripts, NA values, and length mismatches.
+  keep <- !is.na(fill_idx) & !is.na(fill_vals)
+  fill_idx <- fill_idx[keep]
+  fill_vals <- fill_vals[keep]
+
+  if (length(fill_idx) > 0) {
+    df[[col]][fill_idx] <- fill_vals
+
+    df$notes[fill_idx] <- append_note(
+      df$notes[fill_idx],
+      note_text
+    )
+  }
+
+  if (length(fill_idx) < length(missing_idx)) {
+    warning(
+      length(missing_idx) - length(fill_idx),
+      " missing values could not be filled within ",
+      search_radius_m,
+      " m for: ",
+      col
+    )
+  }
+
+  df
+}
+
+fill_nearest_resolve <- function(df, resolve) {
+
+  resolve_vars <- c("EcoregionSite", "BiomeSite", "RealmSite")
+  resolve_vars <- resolve_vars[resolve_vars %in% names(df)]
+
+  if (length(resolve_vars) == 0) {
+    return(df)
+  }
+
+  missing_idx <- which(rowSums(is.na(df[, resolve_vars, drop = FALSE])) > 0)
+  missing_idx <- missing_idx[!is.na(missing_idx)]
+
+  if (length(missing_idx) == 0) {
+    return(df)
+  }
+
+  pts_missing <- df[missing_idx, ] %>%
+    sf::st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, remove = FALSE) %>%
+    sf::st_transform(sf::st_crs(resolve))
+
+  nearest_id <- sf::st_nearest_feature(pts_missing, resolve)
+  nearest_resolve <- resolve[nearest_id, ] %>%
+    sf::st_drop_geometry()
+
+  if ("EcoregionSite" %in% names(df)) {
+    df$EcoregionSite[missing_idx] <- dplyr::coalesce(
+      df$EcoregionSite[missing_idx],
+      nearest_resolve$ECO_NAME
+    )
+  }
+
+  if ("BiomeSite" %in% names(df)) {
+    df$BiomeSite[missing_idx] <- dplyr::coalesce(
+      df$BiomeSite[missing_idx],
+      nearest_resolve$BIOME_NAME
+    )
+  }
+
+  if ("RealmSite" %in% names(df)) {
+    df$RealmSite[missing_idx] <- dplyr::coalesce(
+      df$RealmSite[missing_idx],
+      nearest_resolve$REALM
+    )
+  }
+
+  df$notes[missing_idx] <- append_note(
+    df$notes[missing_idx],
+    "RESOLVE site fields filled from nearest RESOLVE polygon because the sample point fell in a vector coverage gap."
+  )
+
+  df
+}
+```
+
+## 4. Fill soil site variables from nearest non-NA SoilGrids cells
+
+```{r fill-soil}
+site_master_table <- site_master_table %>%
+  fill_nearest_raster_fast(
+    r = soil_clay,
+    col = "ClaySite",
+    note_text = "ClaySite filled from nearest non-NA SoilGrids clay cell because the sample point overlaid a raster gap.",
+    search_radius_m = 50000
+  ) %>%
+  fill_nearest_raster_fast(
+    r = soil_sand,
+    col = "SandSite",
+    note_text = "SandSite filled from nearest non-NA SoilGrids sand cell because the sample point overlaid a raster gap.",
+    search_radius_m = 50000
+  ) %>%
+  fill_nearest_raster_fast(
+    r = soil_soc,
+    col = "SocSite",
+    note_text = "SocSite filled from nearest non-NA SoilGrids soil organic carbon cell because the sample point overlaid a raster gap.",
+    search_radius_m = 50000
+  ) %>%
+  fill_nearest_raster_fast(
+    r = soil_ph,
+    col = "PhSite",
+    note_text = "PhSite filled from nearest non-NA SoilGrids pH cell because the sample point overlaid a raster gap.",
+    search_radius_m = 50000
+  )
+```
+
+## 5. Fill aridity site variable from nearest non-NA aridity raster cell
+
+```{r fill-aridity}
+site_master_table <- site_master_table %>%
+  fill_nearest_raster_fast(
+    r = aridity,
+    col = "AriditySite",
+    note_text = "AriditySite filled from nearest non-NA aridity raster cell because the sample point overlaid a raster gap.",
+    search_radius_m = 100000
+  ) %>%
+  dplyr::mutate(
+    # CGIAR aridity index is stored as x10^4 in the source raster.
+    # This keeps filled raw raster values on the same scale as the rest of the table.
+    AriditySite = dplyr::if_else(
+      !is.na(AriditySite) & AriditySite > 100,
+      AriditySite / 10000,
+      AriditySite
+    )
+  )
+```
+
+## 6. Fill RESOLVE site variables from nearest polygon
+
+```{r fill-resolve}
+site_master_table <- site_master_table %>%
+  fill_nearest_resolve(resolve)
+```
+
+## 7. Final cleanup and write outputs
+
+```{r write-outputs}
+# Keep notes near the end.
+site_master_table <- site_master_table %>%
+  dplyr::relocate(notes, .after = dplyr::last_col())
+
+saveRDS(site_master_table, file.path(extract_dir, "site_global_master_table.RDS"))
+readr::write_csv(site_master_table, file.path(extract_dir, "site_global_master_table.csv"))
+```
+
+## 8. Summarize remaining missing values
+
+```{r summarize-na}
+summarize_na <- site_master_table %>%
+  dplyr::summarise(dplyr::across(dplyr::everything(), ~ sum(is.na(.x)))) %>%
+  tidyr::pivot_longer(
+    dplyr::everything(),
+    names_to = "column",
+    values_to = "n_na"
+  ) %>%
+  dplyr::filter(n_na > 0) %>%
+  dplyr::arrange(dplyr::desc(n_na))
+
+summarize_na
+```
+
+## 9. Inspect rows with notes
+
+```{r inspect-notes}
+site_master_table %>%
+  dplyr::filter(!is.na(notes), notes != "") %>%
+  dplyr::select(
+    sample_name,
+    Latitude,
+    Longitude,
+    ClaySite,
+    SandSite,
+    SocSite,
+    PhSite,
+    AriditySite,
+    EcoregionSite,
+    BiomeSite,
+    RealmSite,
+    notes
+  )
+```
+
+```{r}
+source("src/review_outputs.R")
+
+site_master_table_reviewed <- review_outputs(
+  site_master_table = site_master_table,
+  flowlines = hydro_rivers,
+  river_buffer_m = 10000
+)
+
+saveRDS(
+  site_master_table_reviewed,
+  file.path(extract_dir, "site_global_master_table_reviewed.RDS")
+)
+
+readr::write_csv(
+  site_master_table_reviewed,
+  file.path(extract_dir, "site_global_master_table_reviewed.csv")
+)```
+
