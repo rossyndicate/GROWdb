@@ -1,0 +1,765 @@
+---
+title: "Comparing CONUS + Global Products"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 9,
+  fig.height = 6,
+  dpi = 110
+)
+
+suppressPackageStartupMessages({
+  library(readr)
+  library(dplyr)
+  library(tidyr)
+  library(purrr)
+  library(stringr)
+  library(ggplot2)
+  library(tibble)
+  library(knitr)
+})
+
+have_kableExtra <- requireNamespace("kableExtra", quietly = TRUE)
+
+nice_table <- function(df, caption = NULL, digits = 3) {
+  k <- knitr::kable(df, caption = caption, digits = digits, format = "html")
+  if (have_kableExtra) {
+    k <- kableExtra::kable_styling(
+      k,
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      position = "left"
+    )
+  }
+  k
+}
+
+theme_set(theme_minimal(base_size = 12))
+```
+
+# Purpose
+
+`GROWdb` is the **CONUS-only** product. It was built largely from
+U.S.-specific source layers, including NHDPlus V2, StreamCat, and USGS gage
+data. The **global master table** (`site_global_master_table.csv`) re-derives
+an analogous set of descriptors for the same sampling sites using global
+source layers, including HydroSHEDS / HydroBASINS / HydroRIVERS / HydroATLAS,
+WorldClim 2.1, global land cover, SoilGrids-style soils, and related global
+products.
+
+Because the two products draw on different underlying datasets, identical
+numbers are not expected everywhere. The goal here is narrower: for variables
+that represent the same physical concept, check whether the global workflow
+lands in the same general place as the established CONUS workflow.
+
+This version assumes the global post-processing workflow has already added
+annual climate summaries to `site_global_master_table`, including:
+
+- `tminSite_annual_mean_c`, `tmaxSite_annual_mean_c`, `tmeanSite_annual_mean_c`, `precipSite_annual_sum_mm`
+- `tminWs_annual_mean_c`, `tmaxWs_annual_mean_c`, `tmeanWs_annual_mean_c`, `precipWs_annual_sum_mm`
+
+NPP is intentionally excluded because it is no longer part of the global
+workflow.
+
+# Load and join
+
+```{r load}
+raw <- read_csv("data/date_lat_long_grow_KKA_05.05.26.csv", show_col_types = FALSE)
+grow <- read_csv("data/0-shared/GROWdb_20260528.csv", show_col_types = FALSE)
+global <- read_csv("data/global_watershed_geospatial/extracted/site_global_master_table.csv", show_col_types = FALSE)
+
+cat("Master table:", nrow(raw), "rows x", ncol(raw), "cols\n")
+cat("Global table:", nrow(global), "rows x", ncol(global), "cols\n")
+cat("CONUS table:", nrow(grow), "rows x", ncol(grow), "cols\n")
+```
+
+The two tables share a sample identifier: `sample_name` in the global table
+and `SampleName` in GROWdb. We join on that identifier rather than coordinates,
+because the two products may carry slightly different coordinate precision.
+
+```{r join}
+global <- global %>%
+  rename(sample_id = sample_name)
+
+grow <- grow %>%
+  rename(sample_id = SampleName)
+
+j <- inner_join(global, grow, by = "sample_id", suffix = c("_global", "_grow"))
+
+n_global_only <- length(setdiff(global$sample_id, grow$sample_id))
+n_grow_only <- length(setdiff(grow$sample_id, global$sample_id))
+
+cat("Matched site-pairs:", nrow(j), "\n")
+cat("In global only:", n_global_only, "\n")
+cat("In GROWdb only:", n_grow_only, "\n")
+```
+
+# Helper functions
+
+These helpers make the analysis robust to post-join suffixes. If a field exists
+in both input tables, it is usually renamed to `_global` and `_grow`. If it
+exists in only one table, it usually remains unsuffixed. The helpers below check
+all plausible candidate names and report the actual column used.
+
+```{r helpers}
+first_present <- function(data, candidates) {
+  candidates <- unlist(candidates, use.names = FALSE)
+  hits <- candidates[candidates %in% names(data)]
+  if (length(hits) == 0) NA_character_ else hits[1]
+}
+
+as_numeric_vector <- function(x, n_expected = NULL) {
+  # readr/dplyr joins should produce atomic vectors, but this keeps the workflow
+  # from breaking if a previous step accidentally created a one-value list column.
+  if (is.data.frame(x)) {
+    x <- x[[1]]
+  }
+
+  if (is.list(x) && !is.data.frame(x)) {
+    x <- purrr::map_dbl(x, function(z) {
+      if (length(z) == 0 || all(is.na(z))) {
+        NA_real_
+      } else {
+        suppressWarnings(as.numeric(z[[1]]))
+      }
+    })
+  }
+
+  x <- suppressWarnings(as.numeric(x))
+
+  if (!is.null(n_expected) && length(x) != n_expected) {
+    out <- rep(NA_real_, n_expected)
+    n_copy <- min(length(x), n_expected)
+    out[seq_len(n_copy)] <- x[seq_len(n_copy)]
+    x <- out
+  }
+
+  x
+}
+
+pick_numeric <- function(data, candidates, transform = identity) {
+  candidates <- unlist(candidates, use.names = FALSE)
+  hits <- candidates[candidates %in% names(data)]
+
+  if (length(hits) == 0) {
+    return(rep(NA_real_, nrow(data)))
+  }
+
+  transform <- purrr::as_mapper(transform)
+
+  vals <- purrr::map(hits, ~ as_numeric_vector(data[[.x]], n_expected = nrow(data)))
+  n_finite <- purrr::map_int(vals, ~ sum(is.finite(.x)))
+
+  best_i <- if (any(n_finite > 0)) {
+    which(n_finite > 0)[1]
+  } else {
+    1
+  }
+
+  as_numeric_vector(transform(vals[[best_i]]), n_expected = nrow(data))
+}
+
+row_sum_candidates <- function(data, candidates) {
+  hits <- candidates[candidates %in% names(data)]
+
+  if (length(hits) == 0) {
+    return(rep(NA_real_, nrow(data)))
+  }
+
+  mat <- data %>%
+    dplyr::select(dplyr::all_of(hits)) %>%
+    dplyr::mutate(dplyr::across(dplyr::everything(), ~ suppressWarnings(as.numeric(.x)))) %>%
+    as.data.frame()
+
+  out <- rowSums(mat, na.rm = TRUE)
+  all_missing <- rowSums(!is.na(mat)) == 0
+  out[all_missing] <- NA_real_
+  out
+}
+
+count_non_na <- function(data, candidates) {
+  hits <- candidates[candidates %in% names(data)]
+
+  if (length(hits) == 0) {
+    return(tibble(
+      present = FALSE,
+      column_used = NA_character_,
+      n_nonNA = NA_integer_
+    ))
+  }
+
+  counts <- purrr::map_int(hits, ~ sum(!is.na(data[[.x]])))
+
+  best_i <- if (any(counts > 0)) {
+    which(counts > 0)[1]
+  } else {
+    1
+  }
+
+  tibble(
+    present = TRUE,
+    column_used = hits[best_i],
+    n_nonNA = counts[best_i]
+  )
+}
+
+empty_stats <- function(n = 0L) {
+  tibble(
+    n = as.integer(n),
+    pearson_r = NA_real_,
+    spearman_rho = NA_real_,
+    bias_grow_minus_global = NA_real_,
+    rmse = NA_real_,
+    global_median = NA_real_,
+    grow_median = NA_real_
+  )
+}
+
+safe_cor <- function(x, y, method) {
+  if (length(x) < 3 || stats::sd(x) == 0 || stats::sd(y) == 0) {
+    return(NA_real_)
+  }
+  suppressWarnings(stats::cor(x, y, method = method))
+}
+
+compare_pair <- function(data, x_col, y_col) {
+  if (!x_col %in% names(data) || !y_col %in% names(data)) {
+    return(empty_stats(0L))
+  }
+
+  x <- as_numeric_vector(data[[x_col]], n_expected = nrow(data))
+  y <- as_numeric_vector(data[[y_col]], n_expected = nrow(data))
+  ok <- is.finite(x) & is.finite(y)
+  x <- x[ok]
+  y <- y[ok]
+  n <- length(x)
+
+  if (n == 0) {
+    return(empty_stats(0L))
+  }
+
+  tibble(
+    n = as.integer(n),
+    pearson_r = safe_cor(x, y, method = "pearson"),
+    spearman_rho = safe_cor(x, y, method = "spearman"),
+    bias_grow_minus_global = mean(y - x),
+    rmse = sqrt(mean((y - x)^2)),
+    global_median = median(x),
+    grow_median = median(y)
+  )
+}
+
+run_specs <- function(data, specs) {
+  required_cols <- c("concept", "category", "x_col", "y_col", "unit", "note")
+  missing_cols <- setdiff(required_cols, names(specs))
+
+  if (length(missing_cols) > 0) {
+    stop("Specs table is missing required columns: ", paste(missing_cols, collapse = ", "))
+  }
+
+  specs %>%
+    dplyr::mutate(
+      x_present = x_col %in% names(data),
+      y_present = y_col %in% names(data),
+      stats = purrr::map2(x_col, y_col, ~ compare_pair(data, .x, .y))
+    ) %>%
+    tidyr::unnest(cols = c(stats)) %>%
+    dplyr::select(
+      category, concept, unit, n, pearson_r, spearman_rho,
+      bias_grow_minus_global, rmse, global_median, grow_median,
+      x_col, y_col, x_present, y_present, note
+    )
+}
+
+make_pairs <- function(data, specs) {
+  purrr::pmap_dfr(
+    specs,
+    function(concept, category, x_col, y_col, unit, note, ...) {
+      if (!x_col %in% names(data) || !y_col %in% names(data)) {
+        return(tibble())
+      }
+
+      tibble(
+        concept = concept,
+        category = category,
+        unit = unit,
+        global = as_numeric_vector(data[[x_col]], n_expected = nrow(data)),
+        grow = as_numeric_vector(data[[y_col]], n_expected = nrow(data))
+      )
+    }
+  ) %>%
+    dplyr::filter(is.finite(global), is.finite(grow))
+}
+```
+
+# Build analysis columns
+
+This step creates stable analysis columns with explicit names. The rest of the
+Rmd uses only these stable names, so the comparison does not break if the join
+creates `_global` / `_grow` suffixes differently than expected.
+
+```{r derived}
+j <- j %>%
+  mutate(
+    # Global-side aliases ---------------------------------------------------
+    global_aridity_ws = pick_numeric(., c("AridityWs_global", "AridityWs")),
+    global_aridity_site = pick_numeric(., c("AriditySite_global", "AriditySite")),
+    global_area_km2 = pick_numeric(., c("AreaSqKmWs_global", "AreaSqKmWs", "WsAreaSqKm_global", "WsAreaSqKm")),
+    global_stream_order = pick_numeric(., c("StreamOrder_global", "StreamOrder")),
+    global_discharge_cms = pick_numeric(., c("DischargeCMS_global", "DischargeCMS")),
+    global_elevation_site_m = pick_numeric(., c("ElevationSite_global", "ElevationSite")),
+
+    global_precip_site_mm = pick_numeric(., c("precipSite_annual_sum_mm_global", "precipSite_annual_sum_mm")),
+    global_tmean_site_c = pick_numeric(., c("tmeanSite_annual_mean_c_global", "tmeanSite_annual_mean_c")),
+    global_tmax_site_c = pick_numeric(., c("tmaxSite_annual_mean_c_global", "tmaxSite_annual_mean_c")),
+    global_tmin_site_c = pick_numeric(., c("tminSite_annual_mean_c_global", "tminSite_annual_mean_c")),
+
+    global_precip_ws_mm = pick_numeric(., c("precipWs_annual_sum_mm_global", "precipWs_annual_sum_mm")),
+    global_tmean_ws_c = pick_numeric(., c("tmeanWs_annual_mean_c_global", "tmeanWs_annual_mean_c")),
+    global_tmax_ws_c = pick_numeric(., c("tmaxWs_annual_mean_c_global", "tmaxWs_annual_mean_c")),
+    global_tmin_ws_c = pick_numeric(., c("tminWs_annual_mean_c_global", "tminWs_annual_mean_c")),
+
+    global_clay_ws = pick_numeric(., c("ClayWs_global", "ClayWs")),
+    global_sand_ws = pick_numeric(., c("SandWs_global", "SandWs")),
+    global_dam_dens_ws = pick_numeric(., c("DamDensWs_global", "DamDensWs")),
+
+    # GROWdb-side aliases ---------------------------------------------------
+    grow_aridity_ws = pick_numeric(., c("AridityWs_grow", "AridityWs")),
+    grow_aridity_site = pick_numeric(., c("AriditySite_grow", "AriditySite")),
+    grow_area_km2 = pick_numeric(., c("AreaSqKmWs_grow", "WsAreaSqKm_grow", "totdasqkm", "AreaSqKmWs", "WsAreaSqKm")),
+    grow_stream_order = pick_numeric(., c("streamorde_grow", "streamorde")),
+    grow_qe_ma_cms = pick_numeric(., c("qe_ma_grow", "qe_ma"), transform = ~ .x * 0.0283168),
+    grow_cfs_cms = pick_numeric(., c("CFS_grow", "CFS"), transform = ~ .x * 0.0283168),
+    grow_minelev_m = pick_numeric(., c("minelevsmo_grow", "minelevsmo"), transform = ~ .x / 100),
+
+    grow_precip_site_mm = pick_numeric(., c("PrecipSite_grow", "PrecipSite")),
+    grow_tmean_site_c = pick_numeric(., c("TmeanSite_grow", "TmeanSite")),
+    grow_tmax_site_c = pick_numeric(., c("TmaxSite_grow", "TmaxSite")),
+    grow_tmin_site_c = pick_numeric(., c("TminSite_grow", "TminSite")),
+
+    grow_precip_ws_mm = pick_numeric(., c("PrecipWs_grow", "PrecipWs")),
+    grow_tmean_ws_c = pick_numeric(., c("TmeanWs_grow", "TmeanWs")),
+    grow_tmax_ws_c = pick_numeric(., c("TmaxWs_grow", "TmaxWs")),
+    grow_tmin_ws_c = pick_numeric(., c("TminWs_grow", "TminWs")),
+
+    grow_clay_ws = pick_numeric(., c("ClayWs_grow", "ClayWs")),
+    grow_sand_ws = pick_numeric(., c("SandWs_grow", "SandWs")),
+    grow_dam_dens_ws = pick_numeric(., c("DamDensWs_grow", "DamDensWs"))
+  )
+```
+
+```{r column-resolution, echo=FALSE}
+resolution_specs <- tribble(
+  ~analysis_field, ~candidate_columns,
+  "global_area_km2", list(c("AreaSqKmWs_global", "AreaSqKmWs", "WsAreaSqKm_global", "WsAreaSqKm")),
+  "grow_area_km2", list(c("AreaSqKmWs_grow", "WsAreaSqKm_grow", "totdasqkm", "AreaSqKmWs", "WsAreaSqKm")),
+  "global_precip_ws_mm", list(c("precipWs_annual_sum_mm_global", "precipWs_annual_sum_mm")),
+  "grow_precip_ws_mm", list(c("PrecipWs_grow", "PrecipWs")),
+  "global_tmean_ws_c", list(c("tmeanWs_annual_mean_c_global", "tmeanWs_annual_mean_c")),
+  "grow_tmean_ws_c", list(c("TmeanWs_grow", "TmeanWs")),
+  "global_tmax_ws_c", list(c("tmaxWs_annual_mean_c_global", "tmaxWs_annual_mean_c")),
+  "grow_tmax_ws_c", list(c("TmaxWs_grow", "TmaxWs")),
+  "global_tmin_ws_c", list(c("tminWs_annual_mean_c_global", "tminWs_annual_mean_c")),
+  "grow_tmin_ws_c", list(c("TminWs_grow", "TminWs"))
+)
+
+resolution_tbl <- resolution_specs %>%
+  mutate(info = map(candidate_columns, ~ count_non_na(j, .x))) %>%
+  unnest(info) %>%
+  select(analysis_field, column_used, present, n_nonNA)
+
+nice_table(resolution_tbl, caption = "Resolved columns used for selected analysis fields.")
+```
+
+# Missing value summary for the global table
+
+```{r missing-global}
+na_summary_global <- global %>%
+  summarise(across(everything(), ~ sum(is.na(.x)))) %>%
+  pivot_longer(
+    everything(),
+    names_to = "column",
+    values_to = "n_na"
+  ) %>%
+  filter(n_na > 0) %>%
+  arrange(desc(n_na))
+
+nice_table(na_summary_global, caption = "Remaining missing values in the global master table.")
+```
+
+# Positive controls: shared-source variables
+
+Aridity is kept as the main positive control. NPP is excluded because it is no
+longer used in this workflow.
+
+```{r controls}
+control_specs <- tribble(
+  ~concept, ~category, ~x_col, ~y_col, ~unit, ~note,
+  "Aridity (watershed)", "Control", "global_aridity_ws", "grow_aridity_ws", "index", "Shared-source or directly comparable aridity field",
+  "Aridity (site)", "Control", "global_aridity_site", "grow_aridity_site", "index", "Shared-source or directly comparable aridity field"
+)
+
+control_res <- run_specs(j, control_specs)
+
+nice_table(
+  control_res %>% dplyr::select(-category, -x_col, -y_col, -x_present, -y_present),
+  caption = "Positive controls. Expect near-identical results if the join and units are correct."
+)
+```
+
+# Crosswalk of overlapping variables
+
+```{r crosswalk-doc, echo=FALSE}
+crosswalk_doc <- tribble(
+  ~Concept, ~`Global source`, ~`GROWdb source`, ~`Unit reconciliation`,
+  "Watershed / drainage area", "HydroSHEDS / HydroBASINS upstream area", "NHDPlus V2 total drainage area", "both km^2",
+  "Stream order", "HydroRIVERS Strahler", "NHDPlus stream order", "none",
+  "Mean annual discharge", "HydroATLAS DischargeCMS", "NHDPlus EROM qe_ma", "GROW CFS -> CMS (x0.0283168)",
+  "Discharge at gage", "HydroATLAS DischargeCMS", "USGS gage CFS", "GROW CFS -> CMS (x0.0283168)",
+  "Site elevation", "DEM point elevation", "NHDPlus smoothed minimum elevation", "GROW cm -> m (/100)",
+  "Site annual precip", "WorldClim 2.1 annual summary", "GROWdb / StreamCat site precip", "both mm/yr",
+  "Site annual tmean", "WorldClim 2.1 annual summary", "GROWdb / StreamCat site tmean", "both degC",
+  "Site annual tmax", "WorldClim 2.1 annual summary", "GROWdb / StreamCat site tmax", "both degC",
+  "Site annual tmin", "WorldClim 2.1 annual summary", "GROWdb / StreamCat site tmin", "both degC",
+  "Watershed annual precip", "WorldClim 2.1 watershed annual summary", "GROWdb / StreamCat watershed precip", "both mm/yr",
+  "Watershed annual tmean", "WorldClim 2.1 watershed annual summary", "GROWdb / StreamCat watershed tmean", "both degC",
+  "Watershed annual tmax", "WorldClim 2.1 watershed annual summary", "GROWdb / StreamCat watershed tmax", "both degC",
+  "Watershed annual tmin", "WorldClim 2.1 watershed annual summary", "GROWdb / StreamCat watershed tmin", "both degC",
+  "Watershed clay", "SoilGrids-style global soil", "StreamCat soil", "both %",
+  "Watershed sand", "SoilGrids-style global soil", "StreamCat soil", "both %",
+  "Watershed dam density", "GOODD / GRanD-style global inventories", "NID / StreamCat", "different inventories; divergence expected",
+  "Land cover", "Copernicus/ESA fractions", "NLCD 2016 StreamCat percentages", "global fraction * 100 vs aggregated NLCD %"
+)
+
+nice_table(crosswalk_doc, caption = "Conceptual crosswalk between the two products.")
+```
+
+```{r overlap-specs}
+overlap_specs <- tribble(
+  ~concept, ~category, ~x_col, ~y_col, ~unit, ~note,
+  "Watershed area", "Delineation", "global_area_km2", "grow_area_km2", "km^2", "HydroSHEDS/HydroBASINS vs NHDPlus total drainage area",
+  "Stream order", "Network", "global_stream_order", "grow_stream_order", "Strahler", "HydroRIVERS vs NHDPlus",
+  "Discharge (modeled)", "Hydrology", "global_discharge_cms", "grow_qe_ma_cms", "m^3/s", "HydroATLAS vs NHDPlus EROM",
+  "Discharge (gage)", "Hydrology", "global_discharge_cms", "grow_cfs_cms", "m^3/s", "HydroATLAS vs USGS gage",
+  "Site elevation", "Terrain", "global_elevation_site_m", "grow_minelev_m", "m", "Point DEM vs NHDPlus reach elevation",
+
+  "Site precip (annual)", "Climate", "global_precip_site_mm", "grow_precip_site_mm", "mm/yr", "WorldClim site annual precip vs GROWdb site precip",
+  "Site tmean (annual)", "Climate", "global_tmean_site_c", "grow_tmean_site_c", "degC", "WorldClim site annual tmean vs GROWdb site tmean",
+  "Site tmax (annual)", "Climate", "global_tmax_site_c", "grow_tmax_site_c", "degC", "WorldClim site annual tmax vs GROWdb site tmax",
+  "Site tmin (annual)", "Climate", "global_tmin_site_c", "grow_tmin_site_c", "degC", "WorldClim site annual tmin vs GROWdb site tmin",
+
+  "Watershed precip (annual)", "Climate", "global_precip_ws_mm", "grow_precip_ws_mm", "mm/yr", "WorldClim watershed annual precip vs GROWdb watershed precip",
+  "Watershed tmean (annual)", "Climate", "global_tmean_ws_c", "grow_tmean_ws_c", "degC", "WorldClim watershed annual tmean vs GROWdb watershed tmean",
+  "Watershed tmax (annual)", "Climate", "global_tmax_ws_c", "grow_tmax_ws_c", "degC", "WorldClim watershed annual tmax vs GROWdb watershed tmax",
+  "Watershed tmin (annual)", "Climate", "global_tmin_ws_c", "grow_tmin_ws_c", "degC", "WorldClim watershed annual tmin vs GROWdb watershed tmin",
+
+  "Watershed clay", "Soil", "global_clay_ws", "grow_clay_ws", "%", "SoilGrids vs StreamCat",
+  "Watershed sand", "Soil", "global_sand_ws", "grow_sand_ws", "%", "SoilGrids vs StreamCat",
+  "Watershed dam density", "Human impact", "global_dam_dens_ws", "grow_dam_dens_ws", "dams/km^2", "Different dam inventories; divergence expected"
+)
+
+overlap_res <- run_specs(j, overlap_specs)
+
+overlap_skipped <- overlap_res %>%
+  dplyr::filter(n == 0 | !x_present | !y_present) %>%
+  dplyr::select(concept, x_col, y_col, x_present, y_present, n, note)
+
+nice_table(
+  overlap_res %>%
+    dplyr::select(-category, -x_col, -y_col, -x_present, -y_present),
+  caption = "Concordance of overlapping variables."
+)
+
+if (nrow(overlap_skipped) > 0) {
+  nice_table(
+    overlap_skipped,
+    caption = "Comparisons skipped or unresolved because one side was missing or had no paired finite values."
+  )
+}
+```
+
+# Concordance summary
+
+```{r ranked}
+all_res <- bind_rows(control_res, overlap_res) %>%
+  arrange(desc(pearson_r))
+
+tiered <- all_res %>%
+  mutate(agreement = case_when(
+    is.na(pearson_r) ~ "no data",
+    pearson_r >= 0.98 ~ "near-identical",
+    pearson_r >= 0.90 ~ "strong",
+    pearson_r >= 0.75 ~ "moderate",
+    TRUE ~ "weak / divergent"
+  )) %>%
+  select(category, concept, agreement, n, pearson_r, spearman_rho,
+         bias_grow_minus_global, rmse)
+
+nice_table(tiered, caption = "All comparisons ranked by agreement tier.")
+```
+
+```{r tier-counts, echo=FALSE}
+tier_summary <- tiered %>%
+  filter(!is.na(pearson_r)) %>%
+  count(agreement) %>%
+  arrange(match(agreement, c("near-identical", "strong", "moderate", "weak / divergent")))
+
+nice_table(tier_summary, caption = "Count of variables by agreement tier.")
+```
+
+# Visual concordance
+
+## 1:1 scatter plots
+
+```{r scatter-data}
+pairs_long <- make_pairs(j, overlap_specs)
+```
+
+```{r scatter-plot, fig.height=10}
+ggplot(pairs_long, aes(global, grow)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey40") +
+  geom_point(alpha = 0.5, size = 1.3, colour = "#2c7fb8") +
+  facet_wrap(~ concept, scales = "free", ncol = 4) +
+  labs(
+    title = "GROWdb vs. global master table — matched samples",
+    subtitle = "Dashed line = 1:1. Closeness to the line indicates workflow concordance.",
+    x = "Global master table value",
+    y = "GROWdb value"
+  ) +
+  theme(strip.text = element_text(face = "bold", size = 8))
+```
+
+## Log-log view for magnitude-spanning variables
+
+```{r scatter-log, fig.height=4.5}
+log_concepts <- c("Watershed area", "Discharge (modeled)", "Discharge (gage)")
+
+pairs_long %>%
+  filter(concept %in% log_concepts, global > 0, grow > 0) %>%
+  ggplot(aes(global, grow)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey40") +
+  geom_point(alpha = 0.5, size = 1.3, colour = "#d95f0e") +
+  scale_x_log10() +
+  scale_y_log10() +
+  facet_wrap(~ concept, scales = "free", ncol = 3) +
+  labs(
+    title = "Log-log concordance for magnitude-spanning variables",
+    x = "Global value (log10)",
+    y = "GROWdb value (log10)"
+  )
+```
+
+## Bland-Altman plots
+
+```{r bland-altman, fig.height=9}
+ba_concepts <- c(
+  "Site precip (annual)",
+  "Site tmean (annual)",
+  "Site tmax (annual)",
+  "Site tmin (annual)",
+  "Watershed precip (annual)",
+  "Watershed tmean (annual)",
+  "Watershed tmax (annual)",
+  "Watershed tmin (annual)",
+  "Watershed clay",
+  "Stream order"
+)
+
+pairs_long %>%
+  filter(concept %in% ba_concepts) %>%
+  mutate(
+    mean_val = (global + grow) / 2,
+    diff_val = grow - global
+  ) %>%
+  ggplot(aes(mean_val, diff_val)) +
+  geom_hline(yintercept = 0, colour = "grey40") +
+  geom_point(alpha = 0.5, size = 1.3, colour = "#31a354") +
+  geom_smooth(method = "loess", se = FALSE, colour = "#de2d26", linewidth = 0.7) +
+  facet_wrap(~ concept, scales = "free", ncol = 3) +
+  labs(
+    title = "Bland-Altman: GROWdb - Global vs. mean of the two",
+    subtitle = "Flat red line near zero = no systematic bias.",
+    x = "Mean of the two products",
+    y = "Difference (GROWdb - Global)"
+  )
+```
+
+# Land cover: Copernicus fractions vs. NLCD classes
+
+The global table uses continuous land-cover fractions. GROWdb uses NLCD 2016
+class percentages from StreamCat. To compare them, NLCD classes are aggregated
+into broad groups and global fractions are converted to percentages.
+
+```{r landcover}
+lc <- j %>%
+  transmute(
+    sample_id = sample_id,
+
+    global_forest = 100 * pick_numeric(., c("lc_trees_mean_fraction_global", "lc_trees_mean_fraction")),
+    grow_forest = row_sum_candidates(., c("PctDecid2016Ws", "PctConif2016Ws", "PctMxFst2016Ws")),
+
+    global_crop = 100 * pick_numeric(., c("lc_cropland_mean_fraction_global", "lc_cropland_mean_fraction")),
+    grow_crop = row_sum_candidates(., c("PctCrop2016Ws", "PctHay2016Ws")),
+
+    global_grshrub = 100 * (
+      pick_numeric(., c("lc_grassland_mean_fraction_global", "lc_grassland_mean_fraction")) +
+        pick_numeric(., c("lc_shrubs_mean_fraction_global", "lc_shrubs_mean_fraction"))
+    ),
+    grow_grshrub = row_sum_candidates(., c("PctGrs2016Ws", "PctShrb2016Ws")),
+
+    global_built = 100 * pick_numeric(., c("lc_built_mean_fraction_global", "lc_built_mean_fraction")),
+    grow_built = row_sum_candidates(., c("PctUrbOp2016Ws", "PctUrbLo2016Ws", "PctUrbMd2016Ws", "PctUrbHi2016Ws")),
+
+    global_water = 100 * pick_numeric(., c("lc_water_mean_fraction_global", "lc_water_mean_fraction")),
+    grow_water = row_sum_candidates(., c("PctOw2016Ws")),
+
+    global_wetland = 100 * pick_numeric(., c("lc_wetland_mean_fraction_global", "lc_wetland_mean_fraction")),
+    grow_wetland = row_sum_candidates(., c("PctWdWet2016Ws", "PctHbWet2016Ws"))
+  )
+
+lc_specs <- tribble(
+  ~concept, ~category, ~x_col, ~y_col, ~unit, ~note,
+  "Forest %", "Land cover", "global_forest", "grow_forest", "%", "Copernicus trees vs NLCD forest classes",
+  "Cropland %", "Land cover", "global_crop", "grow_crop", "%", "Copernicus cropland vs NLCD crop + hay",
+  "Grass+shrub %", "Land cover", "global_grshrub", "grow_grshrub", "%", "Copernicus grass + shrub vs NLCD grass + shrub",
+  "Developed %", "Land cover", "global_built", "grow_built", "%", "Copernicus built vs NLCD developed classes",
+  "Open water %", "Land cover", "global_water", "grow_water", "%", "Copernicus water vs NLCD open water",
+  "Wetland %", "Land cover", "global_wetland", "grow_wetland", "%", "Copernicus wetland vs NLCD wetland classes"
+)
+
+lc_res <- run_specs(lc, lc_specs)
+
+nice_table(
+  lc_res %>% dplyr::select(-category, -x_col, -y_col, -x_present, -y_present),
+  caption = "Land cover concordance: Copernicus fractions vs aggregated NLCD 2016."
+)
+```
+
+```{r landcover-plot, fig.height=6}
+lc_pairs <- make_pairs(lc, lc_specs)
+
+ggplot(lc_pairs, aes(global, grow)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey40") +
+  geom_point(alpha = 0.5, size = 1.3, colour = "#756bb1") +
+  facet_wrap(~ concept, scales = "free", ncol = 3) +
+  labs(
+    title = "Land cover: Copernicus global product vs NLCD 2016 GROWdb product",
+    subtitle = "Watershed-aggregated %. Dashed line = 1:1.",
+    x = "Global / Copernicus %",
+    y = "GROWdb / NLCD %"
+  )
+```
+
+# Coverage gaps and non-comparable fields
+
+This section now checks all plausible post-join column names. It should no
+longer falsely report watershed climate fields as empty when they are actually
+present under an unsuffixed or suffixed name.
+
+```{r gaps, echo=FALSE}
+gap_specs <- tribble(
+  ~field_label, ~candidates,
+  "Watershed area", list(c("AreaSqKmWs_grow", "WsAreaSqKm_grow", "totdasqkm", "AreaSqKmWs", "WsAreaSqKm")),
+  "PrecipWs", list(c("PrecipWs_grow", "PrecipWs")),
+  "TmeanWs", list(c("TmeanWs_grow", "TmeanWs")),
+  "TmaxWs", list(c("TmaxWs_grow", "TmaxWs")),
+  "TminWs", list(c("TminWs_grow", "TminWs")),
+  "CatAreaSqKm", list(c("CatAreaSqKm_grow", "CatAreaSqKm")),
+  "CFS", list(c("CFS_grow", "CFS")),
+  "gage_id", list(c("gage_id_grow", "gage_id")),
+  "Global annual watershed precip", list(c("precipWs_annual_sum_mm_global", "precipWs_annual_sum_mm")),
+  "Global annual watershed tmean", list(c("tmeanWs_annual_mean_c_global", "tmeanWs_annual_mean_c")),
+  "Global annual watershed tmax", list(c("tmaxWs_annual_mean_c_global", "tmaxWs_annual_mean_c")),
+  "Global annual watershed tmin", list(c("tminWs_annual_mean_c_global", "tminWs_annual_mean_c"))
+)
+
+gap_tbl <- gap_specs %>%
+  mutate(info = map(candidates, ~ count_non_na(j, .x))) %>%
+  unnest(info) %>%
+  mutate(
+    status = case_when(
+      !present ~ "column absent after join",
+      n_nonNA == 0 ~ "present but empty for matched sites",
+      TRUE ~ "populated"
+    )
+  ) %>%
+  select(
+    `Field checked` = field_label,
+    column_used,
+    present,
+    n_nonNA,
+    status
+  )
+
+nice_table(gap_tbl, caption = "Coverage of selected fields on the matched sites.")
+```
+
+Notes on routed-around or non-comparable fields:
+
+- **Watershed climate is compared when populated.** The script now compares
+  `PrecipWs`, `TmeanWs`, `TmaxWs`, and `TminWs` to the newly added global annual
+  watershed climate summaries.
+- **Column suffixes are handled explicitly.** A field may appear as `PrecipWs`,
+  `PrecipWs_grow`, or another resolved alias depending on whether the same name
+  also exists in the global table.
+- **Ecoregion / biome are not numerically comparable.** The global table uses
+  WWF ecoregions/biomes/realms, while GROWdb uses Omernik levels. These are
+  different classification systems.
+- **Site-level soil** in the global table has no direct GROWdb counterpart, so
+  only watershed soil variables are compared.
+- **NPP is excluded** from all summaries, tables, figures, and conclusions.
+
+# Interpretation and conclusions
+
+```{r conclusion-text, echo=FALSE, results='asis'}
+tier_now <- bind_rows(control_res, overlap_res, lc_res) %>%
+  mutate(agreement = case_when(
+    is.na(pearson_r) ~ "no data",
+    pearson_r >= 0.98 ~ "near-identical",
+    pearson_r >= 0.90 ~ "strong",
+    pearson_r >= 0.75 ~ "moderate",
+    TRUE ~ "weak/divergent"
+  ))
+
+fmt_list <- function(df, tier) {
+  v <- df$concept[df$agreement == tier]
+  if (!length(v)) {
+    return("none")
+  }
+  paste(v, collapse = ", ")
+}
+
+cat(sprintf("- **Controls, near-identical:** %s.\n",
+            fmt_list(tier_now %>% filter(category == "Control"), "near-identical")))
+cat(sprintf("- **Near-identical overall:** %s.\n", fmt_list(tier_now, "near-identical")))
+cat(sprintf("- **Strong:** %s.\n", fmt_list(tier_now, "strong")))
+cat(sprintf("- **Moderate:** %s.\n", fmt_list(tier_now, "moderate")))
+cat(sprintf("- **Weak / divergent:** %s.\n", fmt_list(tier_now, "weak/divergent")))
+```
+
+
+```{r}
+sites_spatial <- site_master_table %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) 
+
+mapview(sites_spatial, zcol = "tminWs_annual_mean_c")
+```
+
+
+**What this establishes.** Agreement on the positive controls supports the join
+and unit handling. Strong agreement on area, stream order, climate, and soils
+supports the global workflow as a reasonable analogue to the CONUS workflow for
+shared concepts. Lower agreement for dam density and discharge can reflect real
+methodological differences among inventories and hydrologic products rather
+than a processing error.
+
+**What to inspect first.** If a variable unexpectedly falls into the weak or
+moderate tier, inspect the resolved column table first. That table shows exactly
+which post-join columns were used, which avoids the earlier problem where
+populated fields were mistakenly labeled empty.

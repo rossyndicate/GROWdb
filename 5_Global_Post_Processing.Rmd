@@ -315,6 +315,65 @@ site_master_table <- site_master_table %>%
   fill_nearest_resolve(resolve)
 ```
 
+## 7. Add annual climate summaries and write outputs
+
+```{r add-annual-climate-summaries}
+site_master_table <- site_master_table %>%
+  dplyr::mutate(
+    # Watershed-scale WorldClim annual summaries ---------------------------
+    tminWs_annual_mean_c = rowMeans(
+      dplyr::across(dplyr::matches("^mean\\.wc2\\.1_2\\.5m_tmin_\\d{2}$")),
+      na.rm = TRUE
+    ),
+    tmaxWs_annual_mean_c = rowMeans(
+      dplyr::across(dplyr::matches("^mean\\.wc2\\.1_2\\.5m_tmax_\\d{2}$")),
+      na.rm = TRUE
+    ),
+    tmeanWs_annual_mean_c = rowMeans(
+      dplyr::across(dplyr::matches("^mean\\.wc2\\.1_2\\.5m_tavg_\\d{2}$")),
+      na.rm = TRUE
+    ),
+    precipWs_annual_sum_mm = rowSums(
+      dplyr::across(dplyr::matches("^mean\\.wc2\\.1_2\\.5m_prec_\\d{2}$")),
+      na.rm = TRUE
+    ),
+
+    # Site-scale WorldClim annual summaries --------------------------------
+    tminSite_annual_mean_c = rowMeans(
+      dplyr::across(dplyr::matches("^tminSite_wc2\\.1_2\\.5m_tmin_\\d{2}$")),
+      na.rm = TRUE
+    ),
+    tmaxSite_annual_mean_c = rowMeans(
+      dplyr::across(dplyr::matches("^tmaxSite_wc2\\.1_2\\.5m_tmax_\\d{2}$")),
+      na.rm = TRUE
+    ),
+    tmeanSite_annual_mean_c = rowMeans(
+      dplyr::across(dplyr::matches("^tavgSite_wc2\\.1_2\\.5m_tavg_\\d{2}$")),
+      na.rm = TRUE
+    ),
+    precipSite_annual_sum_mm = rowSums(
+      dplyr::across(dplyr::matches("^precSite_wc2\\.1_2\\.5m_prec_\\d{2}$")),
+      na.rm = TRUE
+    )
+  ) %>%
+  dplyr::mutate(
+    # rowMeans/rowSums with na.rm = TRUE returns NaN or 0 when all months are NA.
+    # Convert those all-missing annual summaries back to NA.
+    dplyr::across(
+      c(
+        tminWs_annual_mean_c,
+        tmaxWs_annual_mean_c,
+        tmeanWs_annual_mean_c,
+        precipWs_annual_sum_mm,
+        tminSite_annual_mean_c,
+        tmaxSite_annual_mean_c,
+        tmeanSite_annual_mean_c,
+        precipSite_annual_sum_mm
+      ),
+      ~ dplyr::na_if(.x, NaN)
+    )
+  )
+```
 ## 7. Final cleanup and write outputs
 
 ```{r write-outputs}
@@ -380,5 +439,6 @@ saveRDS(
 readr::write_csv(
   site_master_table_reviewed,
   file.path(extract_dir, "site_global_master_table_reviewed.csv")
-)```
+)
+```
 
